@@ -1,0 +1,12 @@
+[package]
+name = "network"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bevy = {version =  "0.12.1", features = ["multi-threaded", "async-io"] }
+byteorder = "1.5.0"
+bytes = {git = "https://github.com/gamesyncltd/bytes.git"}
+kanal = "0.1.0-pre8"
