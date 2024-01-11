@@ -7,10 +7,17 @@ use bytes::Bytes;
 pub enum RakNetEvent {
     Ping(SocketAddr),
     Blocked(SocketAddr, Duration, BlockReason),
-    Connecting(SocketAddr),
-    Connected(SocketAddr, Entity),
-    GamePacket(Entity, SocketAddr, Bytes),
-    Disconnect(Entity, SocketAddr, DisconnectReason),
+    ConnectionRequest(SocketAddr),
+    ConnectionEstablished(SocketAddr, Entity),
+    Disconnect(Entity, DisconnectReason),
+    IncomingBatch(Entity, Bytes),
+    OutgoingBatch(Entity, Bytes),
+}
+
+#[derive(Event)]
+pub enum NetworkEvent {
+    WritePacket(Entity),
+    ReadPacket(Entity),
 }
 
 #[derive(Debug)]
@@ -21,6 +28,7 @@ pub enum DisconnectReason {
     ClientTimeout,
     ServerShutdown,
     DuplicateLogin,
+    Custom(String),
 }
 
 #[derive(Debug)]

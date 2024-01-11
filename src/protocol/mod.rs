@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+pub mod binary;
+pub mod message;
+
 /// Rust Raknet supports multiple Protocol Versions. The latest protocol version
 /// is in the first index of this array.
 pub const PROTOCOL_VERSION: u8 = 11;
@@ -77,16 +80,21 @@ pub const RAKNET_TPS: u128 = 100;
 
 /// This value is the maximum amount of allowed RakNet messages in one second. If the number exceeds this value, the
 /// stream gets disconnected.
-pub const MAX_DATAGRAMS_PER_SECOND: u8 = 200;
+pub const MAX_MSGS_PER_SEC: u8 = 20;
 
 /// This value is the maximum number of malformed messages that the other side of the connection can send during its lifetime.
-pub const MAX_MALFORMED_MESSAGES: usize = 20;
+pub const MAX_INVALID_MSGS: u8 = 20;
 
 /// This value is the time in milliseconds for which a spammy or a bad connection is blocked from the RakListener for.
 pub const RAKNET_BLOCK_DUR: Duration = Duration::from_secs(10);
 
 /// If a RakStream is not responding for more than this time in milliseconds then we assume it is a timeout.
-pub const RAKNET_TIMEOUT: u64 = 100;
+pub const RAKNET_TIMEOUT: u128 = 100;
 
 /// This is the ID of the first packet in the Login Sequence of RakNet which corresponds to Open Connection Request 1
 pub const LOGIN_PACKET_ID: u8 = 0x05;
+
+/// Unconnected Message Sequence is a sequence of bytes found in every Unconnected RakNet message.
+pub const UNCONNECTED_MESSAGE_SEQUENCE: [u8; 16] = [
+    0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,
+];

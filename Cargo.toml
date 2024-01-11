@@ -8,5 +8,9 @@ edition = "2021"
 [dependencies]
 bevy = {version =  "0.12.1", features = ["multi-threaded", "async-io"] }
 byteorder = "1.5.0"
-bytes = {git = "https://github.com/gamesyncltd/bytes.git"}
+binary = {git = "https://github.com/CatSniperDev/BedrockUtils.git"}
+commons = {git = "https://github.com/CatSniperDev/BedrockUtils.git"}
+binary_derive = {git = "https://github.com/CatSniperDev/BedrockUtils.git"}
 kanal = "0.1.0-pre8"
+bytes = "1.5.0"
+log = "0.4.20"
