@@ -1,28 +1,37 @@
 use bevy::ecs::entity::Entity;
 use bevy::ecs::event::EventWriter;
-use bevy::ecs::system::{Query, Resource};
+use bevy::ecs::system::{Commands, Query, Resource};
+use binary::datatypes::{Bool, I64, U16, U8};
+use binary::prefixed::Str;
 use binary::Binary;
 use bytes::BytesMut;
 use commons::utils::unix_timestamp;
 use log::debug;
 
+use crate::generic::events::{BlockReason, RakNetEvent};
+use crate::net::conn::{NetworkBundle, NetworkDecoder, NetworkEncoder, RakNetEncoder};
+use crate::protocol::binary::UDPAddress;
+use crate::protocol::message::Message;
+use crate::protocol::{
+    MAX_INVALID_MSGS, MAX_MSGS_PER_SEC, MAX_MTU_SIZE, PROTOCOL_VERSION, RAKNET_BLOCK_DUR,
+    UDP_HEADER_SIZE,
+};
+use rand::Rng;
 use std::collections::HashMap;
-use std::io::{Cursor, Error, ErrorKind, Result};
+use std::io::{Cursor, Result};
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
-use std::time::Instant;
-
-use crate::generic::events::{BlockReason, RakNetEvent};
-use crate::protocol::message::Message;
-use crate::protocol::{MAX_INVALID_MSGS, MAX_MSGS_PER_SEC, MAX_MTU_SIZE, RAKNET_BLOCK_DUR};
+use std::time::{Duration, Instant};
 
 use super::conn::{NetworkInfo, RakNetDecoder};
 
 /// Minecraft Listener built on top of the UDP Protocol with built-in reliability (also known as RakNet)
 #[derive(Resource)]
 pub struct Listener {
-    socket: Arc<UdpSocket>,
     pub addr: SocketAddr,
+    pub guid: i64,
+
+    socket: Arc<UdpSocket>,
 
     read_buf: BytesMut,
     write_buf: BytesMut,
@@ -42,8 +51,9 @@ impl Listener {
                 socket.set_nonblocking(true).unwrap();
 
                 Ok(Self {
-                    socket: socket.into(),
                     addr,
+                    guid: rand::thread_rng().gen(),
+                    socket: socket.into(),
                     read_buf: BytesMut::zeroed(MAX_MTU_SIZE),
                     write_buf: BytesMut::with_capacity(MAX_MTU_SIZE),
                     connections: HashMap::new(),
@@ -150,18 +160,125 @@ impl Listener {
             }
         }
 
-        return Err(Error::new(
-            ErrorKind::Other,
-            "Entity for the address does not exist",
-        ));
+        Ok(())
     }
 
     /// Handles an unconnected message received on the buffer.
-    pub fn handle_unconnected_message(&mut self, addr: SocketAddr, len: usize) -> Result<()> {
+    pub fn handle_unconnected_message(
+        &mut self,
+        addr: SocketAddr,
+        len: usize,
+        commands: &mut Commands,
+    ) -> Result<()> {
         let mut reader = Cursor::new(&self.read_buf[..len]);
         let message = Message::deserialize(&mut reader)?;
 
         debug!("[+] {:?} {:?}", addr, message);
+
+        match message {
+            Message::UnconnectedPing {
+                send_timestamp,
+                magic,
+                client_guid: _,
+            } => {
+                let resp = Message::UnconnectedPong {
+                    send_timestamp,
+                    server_guid: I64::new(self.guid),
+                    magic,
+                    data: Str::new("MCPE;Dedicated Server;390;1.14.60;0;10;13253860892328930865;Bedrock level;Survival;1;19132;19133;"),
+                };
+
+                self.write_unconnected_message(addr, resp)?;
+            }
+            Message::UnconnectedPingOpenConnections {
+                send_timestamp,
+                magic,
+                client_guid: _,
+            } => {
+                let resp = Message::UnconnectedPong {
+                    send_timestamp,
+                    server_guid: I64::new(self.guid),
+                    magic,
+                    data: Str::new("MCPE;Dedicated Server;390;1.14.60;0;10;13253860892328930865;Bedrock level;Survival;1;19132;19133;"),
+                };
+
+                self.write_unconnected_message(addr, resp)?;
+            }
+            Message::UnconnectedPong {
+                send_timestamp: _,
+                server_guid: _,
+                magic: _,
+                data: _,
+            } => {}
+            Message::OpenConnectionRequest1 {
+                magic,
+                protocol,
+                emptybuf: _,
+            } => {
+                let mut server_mtu = reader.get_ref().len() + UDP_HEADER_SIZE;
+                if server_mtu > MAX_MTU_SIZE {
+                    server_mtu = MAX_MTU_SIZE;
+                }
+
+                if protocol.0 != PROTOCOL_VERSION {
+                    let resp = Message::IncompatibleProtocolVersion {
+                        server_protocol: U8::new(PROTOCOL_VERSION),
+                        magic,
+                        server_guid: I64::new(self.guid),
+                    };
+
+                    self.write_unconnected_message(addr, resp)?;
+                    return Ok(());
+                }
+
+                let resp = Message::OpenConnectionReply1 {
+                    magic,
+                    server_guid: I64::new(self.guid),
+                    secure: Bool::new(false),
+                    server_mtu: U16::new(server_mtu as u16),
+                };
+
+                self.write_unconnected_message(addr, resp)?;
+            }
+            Message::OpenConnectionRequest2 {
+                magic,
+                server_address,
+                client_mtu,
+                client_guid: _,
+            } => {
+                let mut mtu_size = client_mtu.0 as usize;
+                if mtu_size > MAX_MTU_SIZE {
+                    mtu_size = MAX_MTU_SIZE
+                }
+
+                let resp = Message::OpenConnectionReply2 {
+                    magic,
+                    server_guid: I64::new(self.guid),
+                    client_address: UDPAddress(addr),
+                    mtu_size: U16::new(mtu_size as u16),
+                    secure: Bool::new(false),
+                };
+
+                self.write_unconnected_message(addr, resp)?;
+
+                let entity = commands.spawn(NetworkBundle {
+                    info: NetworkInfo {
+                        last_activity: Instant::now(),
+                        latency: Duration::from_secs(0),
+                        ping: 0,
+                        local_addr: server_address.0,
+                        remote_addr: addr,
+                    },
+                    raknet_enc: RakNetEncoder::new(addr, self.socket.clone(), mtu_size),
+                    raknet_dec: RakNetDecoder::new(addr, self.socket.clone()),
+                    network_enc: NetworkEncoder,
+                    network_dec: NetworkDecoder,
+                });
+
+                self.connections.insert(addr, entity.id());
+            }
+            _ => {}
+        }
 
         Ok(())
     }
@@ -169,6 +286,14 @@ impl Listener {
     /// Handles a connected message received on the buffer.
     fn handle_connected_message(&mut self, addr: SocketAddr, message: Message) -> Result<()> {
         debug!("[+] {:?} {:?}", addr, message);
+        Ok(())
+    }
+
+    fn write_unconnected_message(&mut self, addr: SocketAddr, message: Message) -> Result<()> {
+        message.serialize(&mut self.write_buf);
+        self.socket.send_to(&self.write_buf, addr)?;
+        self.write_buf.clear();
+
         Ok(())
     }
 }

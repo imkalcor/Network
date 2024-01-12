@@ -1,7 +1,7 @@
 use bevy::ecs::{
     entity::Entity,
     event::{EventReader, EventWriter},
-    system::{Query, ResMut},
+    system::{Commands, Query, ResMut},
 };
 use log::debug;
 
@@ -40,6 +40,7 @@ pub fn system_read_from_udp(
     mut query: Query<(&mut RakNetDecoder, &mut NetworkInfo)>,
     mut listener: ResMut<Listener>,
     mut ev: EventWriter<RakNetEvent>,
+    mut commands: Commands,
 ) {
     if let Ok((len, addr)) = listener.try_recv() {
         if listener.is_blocked(addr) {
@@ -56,7 +57,7 @@ pub fn system_read_from_udp(
             return;
         }
 
-        if let Err(e) = listener.handle_unconnected_message(addr, len) {
+        if let Err(e) = listener.handle_unconnected_message(addr, len, &mut commands) {
             debug!("[Network Error]: {}", e.to_string());
             listener.check_invalid_packets(addr, &mut ev);
             return;
@@ -72,6 +73,9 @@ pub fn system_write_to_udp(mut query: Query<&mut RakNetEncoder>, mut ev: EventRe
             RakNetEvent::S2CPacketBatch(entity, batch) => {
                 let mut encoder = query.get_mut(*entity).unwrap();
                 encoder.encode(&batch, Reliability::Reliable);
+            }
+            RakNetEvent::Blocked(addr, dur, reason) => {
+                debug!("Blocked {:?} for {:?} - Duration: {:?}", addr, reason, dur);
             }
             _ => {}
         }

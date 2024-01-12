@@ -14,3 +14,4 @@ binary_derive = {git = "https://github.com/CatSniperDev/BedrockUtils.git"}
 kanal = "0.1.0-pre8"
 bytes = {git = "https://github.com/CatSniperDev/bytes"}
 log = "0.4.20"
+rand = "0.8.5"

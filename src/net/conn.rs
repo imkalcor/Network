@@ -1,11 +1,12 @@
 use std::{
+    collections::HashMap,
     io::{Cursor, Error, ErrorKind, Result, Write},
     net::{SocketAddr, UdpSocket},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use bevy::{ecs::component::Component, utils::HashMap};
+use bevy::ecs::{bundle::Bundle, component::Component};
 use binary::{
     datatypes::{I16, U16, U24, U32},
     Binary,
@@ -21,6 +22,15 @@ use crate::{
         MAX_BATCHED_PACKETS, MAX_MTU_SIZE, MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
     },
 };
+
+#[derive(Bundle)]
+pub struct NetworkBundle {
+    pub info: NetworkInfo,
+    pub raknet_enc: RakNetEncoder,
+    pub raknet_dec: RakNetDecoder,
+    pub network_enc: NetworkEncoder,
+    pub network_dec: NetworkDecoder,
+}
 
 /// Network Information about a connected RakNet client.
 #[derive(Component)]
@@ -51,11 +61,11 @@ pub struct RakNetEncoder {
 
 impl RakNetEncoder {
     /// Creates and returns a new RakNetEncoder.
-    pub fn new(addr: SocketAddr, socket: Arc<UdpSocket>, mtu_size: u16) -> Self {
+    pub fn new(addr: SocketAddr, socket: Arc<UdpSocket>, mtu_size: usize) -> Self {
         Self {
             addr,
             socket,
-            mtu_size: mtu_size as usize,
+            mtu_size,
             sequence_number: 0,
             message_index: 0,
             sequence_index: 0,
@@ -185,6 +195,18 @@ pub struct RakNetDecoder {
 }
 
 impl RakNetDecoder {
+    pub fn new(addr: SocketAddr, socket: Arc<UdpSocket>) -> Self {
+        Self {
+            addr,
+            socket,
+            sequence_window: SequenceWindow::new(),
+            message_window: MessageWindow::new(),
+            splits: HashMap::new(),
+            acks: Vec::new(),
+            ack_buf: BytesMut::with_capacity(256),
+        }
+    }
+
     pub fn decode(
         &mut self,
         buffer: &[u8],
@@ -294,6 +316,9 @@ impl RakNetDecoder {
             let start = reader.position() as usize;
             let end = start + length as usize;
 
+            println!("{:?}", length);
+            reader.advance(length as usize);
+
             let content = reader.get_ref()[start..end].to_vec();
 
             if !self.message_window.receive(message_index) {
@@ -313,12 +338,11 @@ impl RakNetDecoder {
                     .remove(&split_id)
                     .unwrap_or(SplitWindow::new(split_count));
 
-                if let Some(buffer) = splits.receive(split_index, content) {
+                if let Some(buffer) = splits.receive(split_index, content.clone()) {
                     messages.push(buffer);
                 }
             }
 
-            let content = reader.get_ref()[start..end].to_vec();
             messages.push(Bytes::from(content));
         }
 
@@ -386,7 +410,7 @@ impl RakNetDecoder {
 }
 
 #[derive(Component)]
-pub struct NetworkEncoder {}
+pub struct NetworkEncoder;
 
 #[derive(Component)]
-pub struct NetworkDecoder {}
+pub struct NetworkDecoder;

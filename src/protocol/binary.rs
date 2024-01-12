@@ -12,9 +12,9 @@ use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use bytes::Buf;
 use std::str::FromStr;
 
-use super::{INTERNAL_ADDRESS, UNCONNECTED_MESSAGE_SEQUENCE};
+use super::{INTERNAL_ADDRESS, SYSTEM_ADDRESS_COUNT, UNCONNECTED_MESSAGE_SEQUENCE};
 
-pub struct UDPAddress(SocketAddr);
+pub struct UDPAddress(pub SocketAddr);
 debug_impl!(UDPAddress);
 
 impl<'a> Binary<'a> for UDPAddress {
@@ -74,13 +74,13 @@ pub struct SystemAddresses;
 
 impl<'a> Binary<'a> for SystemAddresses {
     fn serialize(&self, buf: &mut impl Write) {
-        for _ in 0..20 {
+        for _ in 0..SYSTEM_ADDRESS_COUNT {
             UDPAddress(SocketAddr::from_str(INTERNAL_ADDRESS).unwrap()).serialize(buf);
         }
     }
 
     fn deserialize(buf: &mut Cursor<&'a [u8]>) -> Result<Self> {
-        for _ in 0..20 {
+        for _ in 0..SYSTEM_ADDRESS_COUNT {
             if buf.remaining() == 16 {
                 return Ok(SystemAddresses);
             }

@@ -97,9 +97,6 @@ pub const RAKNET_BLOCK_DUR: Duration = Duration::from_secs(10);
 /// If a RakStream is not responding for more than this time in milliseconds then we assume it is a timeout.
 pub const RAKNET_TIMEOUT: u128 = 100;
 
-/// This is the ID of the first packet in the Login Sequence of RakNet which corresponds to Open Connection Request 1
-pub const LOGIN_PACKET_ID: u8 = 0x05;
-
 /// Unconnected Message Sequence is a sequence of bytes found in every Unconnected RakNet message.
 pub const UNCONNECTED_MESSAGE_SEQUENCE: [u8; 16] = [
     0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78,

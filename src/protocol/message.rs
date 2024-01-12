@@ -1,6 +1,6 @@
 use binary::{
-    datatypes::{Bool, I64, U16, U8},
-    prefixed::UnsizedBytes,
+    datatypes::{Bool, I16, I64, U16, U8},
+    prefixed::{Str, UnsizedBytes},
 };
 use byteorder::BE;
 
@@ -87,7 +87,7 @@ build_message! {
         send_timestamp: I64<BE>,
         server_guid: I64<BE>,
         magic: Magic,
-        data: UnsizedBytes<'a>
+        data: Str<'a, I16<BE>>
     };
     0x05; OpenConnectionRequest1 {
         magic: Magic,
