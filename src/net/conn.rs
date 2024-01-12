@@ -5,10 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bevy::{
-    ecs::{component::Component, entity::Entity, event::EventWriter},
-    utils::HashMap,
-};
+use bevy::{ecs::component::Component, utils::HashMap};
 use binary::{
     datatypes::{I16, U16, U24, U32},
     Binary,
@@ -17,14 +14,11 @@ use byteorder::{ReadBytesExt, BE, LE};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{
-    generic::{
-        events::RakNetEvent,
-        window::{MessageWindow, SequenceWindow, SplitWindow},
-    },
+    generic::window::{MessageWindow, SequenceWindow, SplitWindow},
     protocol::{
         reliability::Reliability, DATAGRAM_HEADER_SIZE, FLAG_ACK, FLAG_DATAGRAM, FLAG_FRAGMENTED,
-        FLAG_NACK, FLAG_NEEDS_B_AND_AS, FRAME_ADDITIONAL_SIZE, FRAME_HEADER_SIZE, MAX_MTU_SIZE,
-        MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
+        FLAG_NACK, FLAG_NEEDS_B_AND_AS, FRAME_ADDITIONAL_SIZE, FRAME_HEADER_SIZE,
+        MAX_BATCHED_PACKETS, MAX_MTU_SIZE, MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
     },
 };
 
@@ -195,9 +189,7 @@ impl RakNetDecoder {
         &mut self,
         buffer: &[u8],
         network: &mut NetworkInfo,
-        entity: Entity,
-        ev: &mut EventWriter<RakNetEvent>,
-    ) -> Result<()> {
+    ) -> Result<Option<Vec<Bytes>>> {
         let mut reader = Cursor::new(buffer);
         let header = reader.read_u8()?;
 
@@ -211,14 +203,16 @@ impl RakNetDecoder {
         network.last_activity = Instant::now();
 
         if header & FLAG_ACK != 0 {
-            return self.handle_ack(false, &mut reader);
+            self.handle_ack(false, &mut reader)?;
+            return Ok(None);
         }
 
         if header & FLAG_NACK != 0 {
-            return self.handle_ack(true, &mut reader);
+            self.handle_ack(true, &mut reader)?;
+            return Ok(None);
         }
 
-        self.handle_datagram(&mut reader, entity, ev)
+        self.handle_datagram(&mut reader)
     }
 
     fn handle_ack(&mut self, nack: bool, reader: &mut Cursor<&[u8]>) -> Result<()> {
@@ -252,17 +246,14 @@ impl RakNetDecoder {
         Ok(())
     }
 
-    fn handle_datagram(
-        &mut self,
-        reader: &mut Cursor<&[u8]>,
-        entity: Entity,
-        ev: &mut EventWriter<RakNetEvent>,
-    ) -> Result<()> {
+    fn handle_datagram(&mut self, reader: &mut Cursor<&[u8]>) -> Result<Option<Vec<Bytes>>> {
         let seq = U24::<LE>::deserialize(reader)?.0;
 
         if !self.sequence_window.receive(seq) {
-            return Ok(());
+            return Ok(None);
         }
+
+        let mut messages = Vec::with_capacity(MAX_BATCHED_PACKETS);
 
         while reader.remaining() != 0 {
             let header = reader.read_u8()?;
@@ -323,16 +314,17 @@ impl RakNetDecoder {
                     .unwrap_or(SplitWindow::new(split_count));
 
                 if let Some(buffer) = splits.receive(split_index, content) {
-                    ev.send(RakNetEvent::C2SPacketBatch(entity, buffer))
+                    messages.push(buffer);
                 }
             }
 
-            let buffer = Bytes::from(reader.get_ref()[start..end].to_vec());
-            ev.send(RakNetEvent::C2SPacketBatch(entity, buffer))
+            let content = reader.get_ref()[start..end].to_vec();
+            messages.push(Bytes::from(content));
         }
 
-        Ok(())
+        Ok(Some(messages))
     }
+
     /// Flushes all the ACKs/NACKs for the sequences we have received and not received respectively to the
     /// socket connection.
     fn flush_acks(&mut self) {

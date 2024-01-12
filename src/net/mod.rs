@@ -3,6 +3,7 @@ use bevy::ecs::{
     event::{EventReader, EventWriter},
     system::{Query, ResMut},
 };
+use log::debug;
 
 use crate::{
     generic::events::{DisconnectReason, NetworkEvent, RakNetEvent},
@@ -49,12 +50,14 @@ pub fn system_read_from_udp(
             return;
         }
 
-        if !listener.try_parse_connected_message(addr, &mut query, &mut ev) {
+        if let Err(e) = listener.try_handle_connected_message(addr, len, &mut query) {
+            debug!("[Network Error]: {}", e.to_string());
             listener.check_invalid_packets(addr, &mut ev);
             return;
         }
 
-        if !listener.try_parse_unconnected_message(addr, len, &mut ev) {
+        if let Err(e) = listener.handle_unconnected_message(addr, len) {
+            debug!("[Network Error]: {}", e.to_string());
             listener.check_invalid_packets(addr, &mut ev);
             return;
         }

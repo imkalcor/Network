@@ -4,10 +4,10 @@ use bevy::ecs::system::{Query, Resource};
 use binary::Binary;
 use bytes::BytesMut;
 use commons::utils::unix_timestamp;
-use log::{debug, trace};
+use log::debug;
 
 use std::collections::HashMap;
-use std::io::{Cursor, Result};
+use std::io::{Cursor, Error, ErrorKind, Result};
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::Instant;
@@ -128,59 +128,47 @@ impl Listener {
         ev.send(RakNetEvent::Blocked(addr, RAKNET_BLOCK_DUR, reason));
     }
 
-    /// Tries to parse a connected message from the Listener's internal read buffer. Returns whether the
-    /// operation failed due to possible corruption in the message.
-    pub fn try_parse_connected_message(
-        &self,
-        addr: SocketAddr,
-        query: &mut Query<(&mut RakNetDecoder, &mut NetworkInfo)>,
-        ev: &mut EventWriter<RakNetEvent>,
-    ) -> bool {
-        if let Some(entity) = self.connections.get(&addr) {
-            let (mut decoder, mut info) = query.get_mut(*entity).unwrap();
-
-            return match decoder.decode(&self.read_buf, &mut info, *entity, ev) {
-                Ok(()) => true,
-                Err(e) => {
-                    debug!("[Network Error]: {}", e.to_string());
-                    false
-                }
-            };
-        }
-
-        true
-    }
-
-    /// Tries to parse an Unconnected Message from the Listener's internal read buffer. Returns
-    /// whether the operation failed due to possible corruption in the message.
-    pub fn try_parse_unconnected_message(
+    /// Checks if the message received on the buffer is a Connected Message. If it is, then it processes the message
+    /// and handles it gracefully.
+    pub fn try_handle_connected_message(
         &mut self,
         addr: SocketAddr,
         len: usize,
-        ev: &mut EventWriter<RakNetEvent>,
-    ) -> bool {
-        let mut reader = Cursor::new(&self.read_buf[..len]);
-        let message = match Message::deserialize(&mut reader) {
-            Ok(msg) => msg,
-            Err(e) => {
-                debug!("[Network Error]: {}", e.to_string());
-                return false;
-            }
-        };
+        query: &mut Query<(&mut RakNetDecoder, &mut NetworkInfo)>,
+    ) -> Result<()> {
+        if let Some(entity) = self.connections.get(&addr) {
+            let (mut decoder, mut info) = query.get_mut(*entity).unwrap();
+            let messages = decoder.decode(&self.read_buf[..len], &mut info)?;
 
-        trace!("[+] {:?} {:?}", addr, message);
+            if let Some(messages) = messages {
+                for message in messages {
+                    let mut reader = Cursor::new(&message[..]);
+                    let message = Message::deserialize(&mut reader)?;
 
-        match message {
-            Message::UnconnectedPing {
-                send_timestamp,
-                magic,
-                client_guid,
-            } => {
-                ev.send(RakNetEvent::Ping(addr));
+                    self.handle_connected_message(addr, message)?;
+                }
             }
-            _ => {}
         }
 
-        true
+        return Err(Error::new(
+            ErrorKind::Other,
+            "Entity for the address does not exist",
+        ));
+    }
+
+    /// Handles an unconnected message received on the buffer.
+    pub fn handle_unconnected_message(&mut self, addr: SocketAddr, len: usize) -> Result<()> {
+        let mut reader = Cursor::new(&self.read_buf[..len]);
+        let message = Message::deserialize(&mut reader)?;
+
+        debug!("[+] {:?} {:?}", addr, message);
+
+        Ok(())
+    }
+
+    /// Handles a connected message received on the buffer.
+    fn handle_connected_message(&mut self, addr: SocketAddr, message: Message) -> Result<()> {
+        debug!("[+] {:?} {:?}", addr, message);
+        Ok(())
     }
 }

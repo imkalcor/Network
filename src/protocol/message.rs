@@ -148,4 +148,7 @@ build_message! {
     0x15; DisconnectNotification {
 
     };
+    0xfe; GamePacket {
+        data: UnsizedBytes<'a>
+    };
 }
