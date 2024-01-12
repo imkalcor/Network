@@ -2,6 +2,7 @@ use std::time::Duration;
 
 pub mod binary;
 pub mod message;
+pub mod reliability;
 
 /// Rust Raknet supports multiple Protocol Versions. The latest protocol version
 /// is in the first index of this array.
@@ -19,7 +20,7 @@ pub const MAX_MTU_SIZE: usize = 1500;
 pub const SYSTEM_ADDRESS_COUNT: usize = 20;
 
 /// This is the number of times a single RakNet message can be split into encapsulated frames.
-pub const MAX_SPLIT_PACKETS: usize = 250;
+pub const MAX_SPLIT_PACKETS: u32 = 250;
 
 /// This is the number of maximum encapsulated frames a single RakNet Datagram can carry.
 pub const MAX_BATCHED_PACKETS: usize = 100;
@@ -35,7 +36,7 @@ pub const UDP_HEADER_SIZE: usize = 20 + 8;
 pub const DATAGRAM_HEADER_SIZE: usize = 1 + 3;
 
 /// This contains the size of the Raknet Frame Header.
-/// Flags (u8)
+/// Frame Header (u8)
 /// Content Length (i16)
 /// Message Index (u24)
 /// Order Index (u24)
@@ -68,15 +69,20 @@ pub const FLAG_NACK: u8 = 0x20;
 pub const FLAG_FRAGMENTED: u8 = 0x10;
 
 /// This is the maximum size that a Raknet Window can have at an instant.
-pub const WINDOW_SIZE: usize = 2048;
+pub const WINDOW_SIZE: u32 = 2048;
 
 /// Internal Address is the default generic address sent to the network stream in various messages while
 /// establishing a RakNet connection.
 pub const INTERNAL_ADDRESS: &str = "255.255.255.255:19132";
 
-/// RAKNET_TPS is the ticks per second that the RakNet runs on. This value is basically every how many milliseconds
-/// should the read and write loops be run.
-pub const RAKNET_TPS: u128 = 100;
+/// RAKNET_TPS is the duration of how often should the RakNet logic run.
+pub const RAKNET_TPS: Duration = Duration::from_millis(100);
+
+/// MINECRAFT_TPS is the duration of how often should the Minecraft logic run.
+pub const MINECRAFT_TPS: Duration = Duration::from_millis(50);
+
+/// This specifies the duration of how often we should be checking the outlived connections.
+pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// This value is the maximum amount of allowed RakNet messages in one second. If the number exceeds this value, the
 /// stream gets disconnected.

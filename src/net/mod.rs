@@ -6,7 +6,7 @@ use bevy::ecs::{
 
 use crate::{
     generic::events::{DisconnectReason, NetworkEvent, RakNetEvent},
-    protocol::RAKNET_TIMEOUT,
+    protocol::{reliability::Reliability, RAKNET_TIMEOUT},
 };
 
 use self::{
@@ -19,12 +19,12 @@ pub mod listener;
 
 /// This system is responsible for checking any outlived connections and sends a timeout to the connections
 /// that don't respond for more than a specific time period.
-pub fn system_check_outlived_connections(
+pub fn system_check_timeout(
     query: Query<(Entity, &NetworkInfo)>,
     mut ev: EventWriter<RakNetEvent>,
 ) {
     for (entity, activity) in query.iter() {
-        if activity.last.elapsed().as_millis() > RAKNET_TIMEOUT {
+        if activity.last_activity.elapsed().as_millis() > RAKNET_TIMEOUT {
             ev.send(RakNetEvent::Disconnect(
                 entity,
                 DisconnectReason::ClientTimeout,
@@ -36,7 +36,7 @@ pub fn system_check_outlived_connections(
 /// This system is responsible for reading for any messages from the UdpSocket. It handles all the Unconnected Messages
 /// and internal Connected Messages immediately while it writes an event for any Game Packets received.
 pub fn system_read_from_udp(
-    mut query: Query<&mut RakNetDecoder>,
+    mut query: Query<(&mut RakNetDecoder, &mut NetworkInfo)>,
     mut listener: ResMut<Listener>,
     mut ev: EventWriter<RakNetEvent>,
 ) {
@@ -49,7 +49,7 @@ pub fn system_read_from_udp(
             return;
         }
 
-        if !listener.try_parse_connected_message(addr, &mut query) {
+        if !listener.try_parse_connected_message(addr, &mut query, &mut ev) {
             listener.check_invalid_packets(addr, &mut ev);
             return;
         }
@@ -66,15 +66,9 @@ pub fn system_read_from_udp(
 pub fn system_write_to_udp(mut query: Query<&mut RakNetEncoder>, mut ev: EventReader<RakNetEvent>) {
     for event in ev.read() {
         match event {
-            RakNetEvent::OutgoingBatch(entity, buffer) => {
-                if let Ok(mut encoder) = query.get_mut(*entity) {
-                    encoder.encode(&buffer)
-                }
-            }
-            RakNetEvent::Disconnect(entity, reason) => {
-                if let Ok(mut encoder) = query.get_mut(*entity) {
-                    encoder.disconnect(reason)
-                }
+            RakNetEvent::S2CPacketBatch(entity, batch) => {
+                let mut encoder = query.get_mut(*entity).unwrap();
+                encoder.encode(&batch, Reliability::Reliable);
             }
             _ => {}
         }

@@ -10,14 +10,16 @@ pub enum RakNetEvent {
     ConnectionRequest(SocketAddr),
     ConnectionEstablished(SocketAddr, Entity),
     Disconnect(Entity, DisconnectReason),
-    IncomingBatch(Entity, Bytes),
-    OutgoingBatch(Entity, Bytes),
+    C2SPacketBatch(Entity, Bytes),
+    S2CPacketBatch(Entity, Bytes),
 }
 
 #[derive(Event)]
 pub enum NetworkEvent {
-    WritePacket(Entity),
-    ReadPacket(Entity),
+    ConnectionRequest(Entity),
+    ConnectionEstablished(Entity),
+    C2SPacket(Entity, Bytes),
+    S2CPacket(Entity, Bytes),
 }
 
 #[derive(Debug)]
@@ -28,7 +30,6 @@ pub enum DisconnectReason {
     ClientTimeout,
     ServerShutdown,
     DuplicateLogin,
-    Custom(String),
 }
 
 #[derive(Debug)]

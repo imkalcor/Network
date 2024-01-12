@@ -1101,7 +1101,7 @@ version = "0.1.0"
 source = "git+https://github.com/CatSniperDev/BedrockUtils.git#d3b1992fa194a8b733ce9697ba23f3cb53d79c72"
 dependencies = [
  "byteorder",
- "bytes",
+ "bytes 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1257,6 +1257,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 
 [[package]]
+name = "bytes"
+version = "1.5.0"
+source = "git+https://github.com/CatSniperDev/bytes#0dc1cd191f19f2135b2d58bee147658c1003cd49"
+
+[[package]]
 name = "cc"
 version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1356,7 +1361,7 @@ version = "4.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35ed6e9d84f0b51a7f52daf1c7d71dd136fd7a3f41a8462b8cdb8c78d920fad4"
 dependencies = [
- "bytes",
+ "bytes 1.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "memchr",
 ]
 
@@ -2501,7 +2506,7 @@ dependencies = [
  "binary",
  "binary_derive",
  "byteorder",
- "bytes",
+ "bytes 1.5.0 (git+https://github.com/CatSniperDev/bytes)",
  "commons",
  "kanal",
  "log",
