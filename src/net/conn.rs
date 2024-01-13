@@ -124,8 +124,11 @@ impl RakStream {
 
             if split || content.len() > max_len || reliability != Reliability::ReliableOrdered {
                 self.flush(&self.buffer);
-                self.sequence_number += 1;
                 self.last_flushed = Instant::now();
+
+                self.recovery_window
+                    .add(self.sequence_number, self.buffer.clone().into());
+                self.sequence_number += 1;
                 self.buffer.clear();
             }
 
@@ -200,7 +203,7 @@ impl RakStream {
     pub fn decode(
         &mut self,
         buffer: &[u8],
-        network: &mut NetworkInfo,
+        info: &mut NetworkInfo,
         ev: &mut EventWriter<RakNetEvent>,
         entity: Entity,
     ) -> Result<()> {
@@ -214,14 +217,14 @@ impl RakStream {
             ));
         }
 
-        network.last_activity = Instant::now();
+        info.last_activity = Instant::now();
 
         if header & FLAG_ACK != 0 {
-            return self.decode_ack(&mut reader);
+            return self.decode_ack(&mut reader, info);
         }
 
         if header & FLAG_NACK != 0 {
-            return self.decode_nack(&mut reader);
+            return self.decode_nack(&mut reader, info);
         }
 
         self.decode_datagram(&mut reader, ev, entity)
@@ -351,21 +354,24 @@ impl RakStream {
 
     /// This decodes a Positive Acknowledgement Receipt from the other end of the connection by removing it
     /// from the recovery queue.
-    fn decode_ack(&mut self, reader: &mut Cursor<&[u8]>) -> Result<()> {
+    fn decode_ack(&mut self, reader: &mut Cursor<&[u8]>, info: &mut NetworkInfo) -> Result<()> {
         self.read_receipts(reader)?;
+        trace!("[+] {:?} Received ACKs: {:?}", self.addr, self.receipts);
 
         for i in 0..self.receipts.len() {
             let sequence = self.receipts.remove(i);
             self.recovery_window.acknowledge(sequence);
         }
 
+        info.latency = self.recovery_window.rtt();
         Ok(())
     }
 
     /// This decodes a Negative Acknowledgement Receipt from the other end of the connection by retransmitting
     /// the packet from the recovery queue.
-    fn decode_nack(&mut self, reader: &mut Cursor<&[u8]>) -> Result<()> {
+    fn decode_nack(&mut self, reader: &mut Cursor<&[u8]>, info: &mut NetworkInfo) -> Result<()> {
         self.read_receipts(reader)?;
+        trace!("[+] {:?} Received NACKs: {:?}", self.addr, self.receipts);
 
         for i in 0..self.receipts.len() {
             let sequence = self.receipts.remove(i);
@@ -376,6 +382,7 @@ impl RakStream {
             }
         }
 
+        info.latency = self.recovery_window.rtt();
         Ok(())
     }
 
@@ -415,7 +422,11 @@ impl RakStream {
     /// Writes a Positive Acknowledgement Receipt to the other end of the connection containing all the
     /// sequence numbers that we received.
     fn write_ack(&mut self) {
-        trace!("Sending ACKs for {:?}", &self.sequence_window.acks);
+        trace!(
+            "[-] {:?} Sending ACKs {:?}",
+            self.addr,
+            &self.sequence_window.acks
+        );
         let _ = self.receipt_buf.write_u8(FLAG_DATAGRAM | FLAG_ACK);
         self.write_receipts(false);
     }
@@ -423,7 +434,11 @@ impl RakStream {
     /// Writes a Negative Acknowledgement Receipt to the other end of the connection containing all the
     /// sequence numbers that we did not receive.
     fn write_nack(&mut self) {
-        trace!("Sending ACKs for {:?}", &self.sequence_window.nacks);
+        trace!(
+            "[-] {:?} Sending NACKs {:?}",
+            self.addr,
+            &self.sequence_window.nacks
+        );
         let _ = self.receipt_buf.write_u8(FLAG_DATAGRAM | FLAG_NACK);
         self.write_receipts(true);
     }
@@ -525,7 +540,7 @@ impl RakStream {
     /// Tries to flush the packets written so far to the socket depending upon how long back we
     /// flushed.
     pub fn try_flush(&mut self) {
-        if self.last_flushed.elapsed().as_millis() > RAKNET_TPS {
+        if self.last_flushed.elapsed().as_millis() > RAKNET_TPS && self.buffer.len() > 0 {
             self.flush(&self.buffer);
             self.sequence_number += 1;
             self.last_flushed = Instant::now();

@@ -3,9 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::Bytes;
-
 use crate::protocol::WINDOW_SIZE;
+use bytes::Bytes;
 
 pub struct SequenceWindow {
     pub start: u32,
@@ -151,6 +150,16 @@ impl RecoveryWindow {
         }
     }
 
+    pub fn add(&mut self, sequence: u32, packet: Bytes) {
+        self.unacknowledged.insert(
+            sequence,
+            Record {
+                packet,
+                instant: Instant::now(),
+            },
+        );
+    }
+
     pub fn acknowledge(&mut self, sequence: u32) {
         if let Some(record) = self.unacknowledged.remove(&sequence) {
             self.delays.insert(Instant::now(), record.instant.elapsed());
@@ -182,6 +191,6 @@ impl RecoveryWindow {
             return total / records;
         }
 
-        Duration::from_millis(50)
+        Duration::from_secs(0)
     }
 }

@@ -151,7 +151,6 @@ impl Listener {
         if let Some(entity) = self.connections.get(&addr) {
             let (mut conn, mut info) = query.get_mut(*entity).unwrap();
             conn.decode(&self.read_buf[..len], &mut info, ev, *entity)?;
-
             return Ok(true);
         }
 
