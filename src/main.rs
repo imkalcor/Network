@@ -4,13 +4,10 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use commons::logger::init_logger;
 use generic::events::{NetworkEvent, RakNetEvent};
 use log::LevelFilter;
-use net::{
-    listener::Listener, system_check_timeout, system_read_from_raknet, system_read_from_udp,
-    system_write_to_raknet, system_write_to_udp,
-};
+use net::{listener::Listener, system_check_timeout, system_read_from_udp, system_write_to_udp};
 use protocol::RAKNET_CHECK_TIMEOUT;
 
-pub(crate) mod generic;
+pub mod generic;
 pub(crate) mod net;
 pub(crate) mod protocol;
 
@@ -36,8 +33,6 @@ impl Plugin for NetworkServer {
         app.add_event::<NetworkEvent>();
         app.add_systems(PreUpdate, system_read_from_udp);
         app.add_systems(PreUpdate, system_write_to_udp);
-        app.add_systems(PreUpdate, system_read_from_raknet);
-        app.add_systems(PreUpdate, system_write_to_raknet);
         app.add_systems(
             PreUpdate,
             system_check_timeout.run_if(on_timer(RAKNET_CHECK_TIMEOUT)),
@@ -50,6 +45,6 @@ fn main() {
 
     App::new()
         .add_plugins(MinimalPlugins)
-        .add_plugins(NetworkServer::new("127.0.0.1:19132"))
+        .add_plugins(NetworkServer::new("0.0.0.0:19132"))
         .run();
 }

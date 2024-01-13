@@ -10,8 +10,8 @@ pub enum RakNetEvent {
     ConnectionRequest(SocketAddr),
     ConnectionEstablished(SocketAddr, Entity),
     Disconnect(Entity, DisconnectReason),
-    C2SPacketBatch(Entity, Bytes),
-    S2CPacketBatch(Entity, Bytes),
+    C2SGamePacket(Entity, Vec<u8>),
+    S2CGamePacket(Entity, Vec<u8>),
 }
 
 #[derive(Event)]

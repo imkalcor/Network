@@ -1,3 +1,8 @@
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
+
 use bytes::Bytes;
 
 use crate::protocol::WINDOW_SIZE;
@@ -110,7 +115,7 @@ impl SplitWindow {
         }
     }
 
-    pub fn receive(&mut self, index: u32, fragment: Vec<u8>) -> Option<Bytes> {
+    pub fn receive(&mut self, index: u32, fragment: Vec<u8>) -> Option<Vec<u8>> {
         self.fragments.insert(index as usize, fragment);
 
         if self.fragments.capacity() != self.fragments.len() {
@@ -124,6 +129,59 @@ impl SplitWindow {
             buffer.extend_from_slice(&fragment);
         }
 
-        Some(Bytes::from(buffer))
+        Some(buffer)
+    }
+}
+
+pub struct Record {
+    packet: Bytes,
+    instant: Instant,
+}
+
+pub struct RecoveryWindow {
+    pub unacknowledged: HashMap<u32, Record>,
+    pub delays: HashMap<Instant, Duration>,
+}
+
+impl RecoveryWindow {
+    pub fn new() -> Self {
+        Self {
+            unacknowledged: HashMap::new(),
+            delays: HashMap::new(),
+        }
+    }
+
+    pub fn acknowledge(&mut self, sequence: u32) {
+        if let Some(record) = self.unacknowledged.remove(&sequence) {
+            self.delays.insert(Instant::now(), record.instant.elapsed());
+        }
+    }
+
+    pub fn retransmit(&mut self, sequence: u32) -> Option<Bytes> {
+        if let Some(record) = self.unacknowledged.remove(&sequence) {
+            self.delays
+                .insert(Instant::now(), record.instant.elapsed() * 2);
+            return Some(record.packet);
+        }
+
+        None
+    }
+
+    pub fn rtt(&mut self) -> Duration {
+        let mut total = Duration::from_secs(0);
+        let mut records = 0;
+
+        self.delays.retain(|&time, _| time.elapsed().as_secs() <= 5);
+
+        for (_, duration) in self.delays.iter() {
+            total += *duration;
+            records += 1;
+        }
+
+        if records != 0 {
+            return total / records;
+        }
+
+        Duration::from_millis(50)
     }
 }

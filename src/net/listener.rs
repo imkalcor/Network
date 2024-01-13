@@ -6,10 +6,10 @@ use binary::prefixed::Str;
 use binary::Binary;
 use bytes::BytesMut;
 use commons::utils::unix_timestamp;
-use log::debug;
+use log::trace;
 
 use crate::generic::events::{BlockReason, RakNetEvent};
-use crate::net::conn::{NetworkBundle, NetworkDecoder, NetworkEncoder, RakNetEncoder};
+use crate::net::conn::{NetworkBundle, RakStream};
 use crate::protocol::binary::UDPAddress;
 use crate::protocol::message::Message;
 use crate::protocol::{
@@ -23,7 +23,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::conn::{NetworkInfo, RakNetDecoder};
+use super::conn::NetworkInfo;
 
 /// Minecraft Listener built on top of the UDP Protocol with built-in reliability (also known as RakNet)
 #[derive(Resource)]
@@ -106,6 +106,7 @@ impl Listener {
             }
         } else {
             instant = Instant::now();
+            packets = 0;
         }
 
         self.packets_per_sec.insert(addr, (instant, packets));
@@ -140,27 +141,21 @@ impl Listener {
 
     /// Checks if the message received on the buffer is a Connected Message. If it is, then it processes the message
     /// and handles it gracefully.
-    pub fn try_handle_connected_message(
+    pub fn handle_connected_message(
         &mut self,
         addr: SocketAddr,
         len: usize,
-        query: &mut Query<(&mut RakNetDecoder, &mut NetworkInfo)>,
-    ) -> Result<()> {
+        query: &mut Query<(&mut RakStream, &mut NetworkInfo)>,
+        ev: &mut EventWriter<RakNetEvent>,
+    ) -> Result<bool> {
         if let Some(entity) = self.connections.get(&addr) {
-            let (mut decoder, mut info) = query.get_mut(*entity).unwrap();
-            let messages = decoder.decode(&self.read_buf[..len], &mut info)?;
+            let (mut conn, mut info) = query.get_mut(*entity).unwrap();
+            conn.decode(&self.read_buf[..len], &mut info, ev, *entity)?;
 
-            if let Some(messages) = messages {
-                for message in messages {
-                    let mut reader = Cursor::new(&message[..]);
-                    let message = Message::deserialize(&mut reader)?;
-
-                    self.handle_connected_message(addr, message)?;
-                }
-            }
+            return Ok(true);
         }
 
-        Ok(())
+        return Ok(false);
     }
 
     /// Handles an unconnected message received on the buffer.
@@ -173,7 +168,7 @@ impl Listener {
         let mut reader = Cursor::new(&self.read_buf[..len]);
         let message = Message::deserialize(&mut reader)?;
 
-        debug!("[+] {:?} {:?}", addr, message);
+        trace!("[+] {:?} {:?}", addr, message);
 
         match message {
             Message::UnconnectedPing {
@@ -188,7 +183,7 @@ impl Listener {
                     data: Str::new("MCPE;Dedicated Server;390;1.14.60;0;10;13253860892328930865;Bedrock level;Survival;1;19132;19133;"),
                 };
 
-                self.write_unconnected_message(addr, resp)?;
+                self.write_message(addr, resp)?;
             }
             Message::UnconnectedPingOpenConnections {
                 send_timestamp,
@@ -202,7 +197,7 @@ impl Listener {
                     data: Str::new("MCPE;Dedicated Server;390;1.14.60;0;10;13253860892328930865;Bedrock level;Survival;1;19132;19133;"),
                 };
 
-                self.write_unconnected_message(addr, resp)?;
+                self.write_message(addr, resp)?;
             }
             Message::UnconnectedPong {
                 send_timestamp: _,
@@ -227,7 +222,7 @@ impl Listener {
                         server_guid: I64::new(self.guid),
                     };
 
-                    self.write_unconnected_message(addr, resp)?;
+                    self.write_message(addr, resp)?;
                     return Ok(());
                 }
 
@@ -238,7 +233,7 @@ impl Listener {
                     server_mtu: U16::new(server_mtu as u16),
                 };
 
-                self.write_unconnected_message(addr, resp)?;
+                self.write_message(addr, resp)?;
             }
             Message::OpenConnectionRequest2 {
                 magic,
@@ -259,7 +254,7 @@ impl Listener {
                     secure: Bool::new(false),
                 };
 
-                self.write_unconnected_message(addr, resp)?;
+                self.write_message(addr, resp)?;
 
                 let entity = commands.spawn(NetworkBundle {
                     info: NetworkInfo {
@@ -269,10 +264,7 @@ impl Listener {
                         local_addr: server_address.0,
                         remote_addr: addr,
                     },
-                    raknet_enc: RakNetEncoder::new(addr, self.socket.clone(), mtu_size),
-                    raknet_dec: RakNetDecoder::new(addr, self.socket.clone()),
-                    network_enc: NetworkEncoder,
-                    network_dec: NetworkDecoder,
+                    rakstream: RakStream::new(addr, self.socket.clone(), mtu_size),
                 });
 
                 self.connections.insert(addr, entity.id());
@@ -283,13 +275,8 @@ impl Listener {
         Ok(())
     }
 
-    /// Handles a connected message received on the buffer.
-    fn handle_connected_message(&mut self, addr: SocketAddr, message: Message) -> Result<()> {
-        debug!("[+] {:?} {:?}", addr, message);
-        Ok(())
-    }
-
-    fn write_unconnected_message(&mut self, addr: SocketAddr, message: Message) -> Result<()> {
+    /// Writes an unconnected message to the provided address and flushes it immediately.
+    fn write_message(&mut self, addr: SocketAddr, message: Message) -> Result<()> {
         message.serialize(&mut self.write_buf);
         self.socket.send_to(&self.write_buf, addr)?;
         self.write_buf.clear();

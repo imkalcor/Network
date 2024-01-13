@@ -8,10 +8,6 @@ pub mod reliability;
 /// is in the first index of this array.
 pub const PROTOCOL_VERSION: u8 = 11;
 
-/// Raknet Messages cannot subceed this MTU size, in case the client sends a MTU size of value
-/// subceeding this value, then it's forced to MAX_MTU_SIZE.
-pub const MIN_MTU_SIZE: usize = 500;
-
 /// Raknet Messages cannot exceed this MTU size, if they do, they are fragmented
 /// into smaller encapsulated frames.
 pub const MAX_MTU_SIZE: usize = 1500;
@@ -75,11 +71,8 @@ pub const WINDOW_SIZE: u32 = 2048;
 /// establishing a RakNet connection.
 pub const INTERNAL_ADDRESS: &str = "255.255.255.255:19132";
 
-/// RAKNET_TPS is the duration of how often should the RakNet logic run.
-pub const RAKNET_TPS: Duration = Duration::from_millis(100);
-
-/// MINECRAFT_TPS is the duration of how often should the Minecraft logic run.
-pub const MINECRAFT_TPS: Duration = Duration::from_millis(50);
+/// RAKNET_TPS is the duration of how often in milliseconds should the RakNet logic run.
+pub const RAKNET_TPS: u128 = 100;
 
 /// This specifies the duration of how often we should be checking the outlived connections.
 pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
