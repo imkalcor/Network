@@ -1,16 +1,22 @@
+use bevy::ecs::bundle::Bundle;
+use bevy::ecs::component::Component;
 use bevy::ecs::entity::Entity;
 use bevy::ecs::event::EventWriter;
-use bevy::ecs::system::{Commands, Query, Resource};
+use bevy::ecs::system::{Commands, Query};
 use binary::datatypes::{Bool, I64, U16, U8};
 use binary::prefixed::Str;
 use binary::Binary;
 use bytes::BytesMut;
 use commons::utils::unix_timestamp;
-use log::trace;
+use log::{info, trace};
 
 use crate::generic::events::{BlockReason, RakNetEvent};
 use crate::net::conn::{NetworkBundle, RakStream};
 use crate::protocol::binary::UDPAddress;
+use crate::protocol::mcpe::{
+    BroadcastGamemode, MaxPlayers, MinecraftProtocol, MinecraftVersion, OnlinePlayers, PrimaryMotd,
+    SecondaryMotd,
+};
 use crate::protocol::message::Message;
 use crate::protocol::{
     MAX_INVALID_MSGS, MAX_MSGS_PER_SEC, MAX_MTU_SIZE, PROTOCOL_VERSION, RAKNET_BLOCK_DUR,
@@ -25,8 +31,20 @@ use std::time::{Duration, Instant};
 
 use super::conn::NetworkInfo;
 
+#[derive(Bundle)]
+pub struct ServerBundle {
+    pub listener: Listener,
+    pub primary_motd: PrimaryMotd,
+    pub secondary_motd: SecondaryMotd,
+    pub online_players: OnlinePlayers,
+    pub max_players: MaxPlayers,
+    pub gamemode: BroadcastGamemode,
+    pub protocol: MinecraftProtocol,
+    pub version: MinecraftVersion,
+}
+
 /// Minecraft Listener built on top of the UDP Protocol with built-in reliability (also known as RakNet)
-#[derive(Resource)]
+#[derive(Component)]
 pub struct Listener {
     pub addr: SocketAddr,
     pub guid: i64,
@@ -162,6 +180,7 @@ impl Listener {
         &mut self,
         addr: SocketAddr,
         len: usize,
+        status: &str,
         commands: &mut Commands,
     ) -> Result<()> {
         let mut reader = Cursor::new(&self.read_buf[..len]);
@@ -179,7 +198,7 @@ impl Listener {
                     send_timestamp,
                     server_guid: I64::new(self.guid),
                     magic,
-                    data: Str::new("MCPE;Dedicated Server;390;1.14.60;0;10;13253860892328930865;Bedrock level;Survival;1;19132;19133;"),
+                    data: Str::new(status),
                 };
 
                 self.write_message(addr, resp)?;
@@ -193,7 +212,7 @@ impl Listener {
                     send_timestamp,
                     server_guid: I64::new(self.guid),
                     magic,
-                    data: Str::new("MCPE;Dedicated Server;390;1.14.60;0;10;13253860892328930865;Bedrock level;Survival;1;19132;19133;"),
+                    data: Str::new(status),
                 };
 
                 self.write_message(addr, resp)?;
@@ -267,6 +286,7 @@ impl Listener {
                 });
 
                 self.connections.insert(addr, entity.id());
+                info!("Connections: {:?}", self.connections.len());
             }
             _ => {}
         }

@@ -4,12 +4,21 @@ use bevy::{prelude::*, time::common_conditions::on_timer};
 use commons::logger::init_logger;
 use generic::events::{NetworkEvent, RakNetEvent};
 use log::LevelFilter;
-use net::{listener::Listener, system_check_timeout, system_read_from_udp, system_write_to_udp};
-use protocol::RAKNET_CHECK_TIMEOUT;
+use net::{
+    listener::{Listener, ServerBundle},
+    system_check_timeout, system_read_from_udp, system_write_to_udp,
+};
+use protocol::{
+    mcpe::{
+        BroadcastGamemode, MaxPlayers, MinecraftProtocol, MinecraftVersion, OnlinePlayers,
+        PrimaryMotd, SecondaryMotd, StatusResource,
+    },
+    RAKNET_CHECK_TIMEOUT,
+};
 
 pub mod generic;
-pub(crate) mod net;
-pub(crate) mod protocol;
+pub mod net;
+pub mod protocol;
 
 pub struct NetworkServer {
     addr: SocketAddr,
@@ -26,9 +35,6 @@ impl NetworkServer {
 
 impl Plugin for NetworkServer {
     fn build(&self, app: &mut App) {
-        let listener = Listener::new(self.addr).unwrap();
-
-        app.insert_resource(listener);
         app.add_event::<RakNetEvent>();
         app.add_event::<NetworkEvent>();
         app.add_systems(PreUpdate, system_read_from_udp);
@@ -37,11 +43,24 @@ impl Plugin for NetworkServer {
             PreUpdate,
             system_check_timeout.run_if(on_timer(RAKNET_CHECK_TIMEOUT)),
         );
+
+        app.world.spawn(ServerBundle {
+            listener: Listener::new(self.addr).unwrap(),
+            primary_motd: PrimaryMotd::new("RakNet"),
+            secondary_motd: SecondaryMotd::new("blazingly fast!"),
+            online_players: OnlinePlayers::new(0),
+            max_players: MaxPlayers::new(1000),
+            gamemode: BroadcastGamemode::new("Survival"),
+            protocol: MinecraftProtocol::new(600),
+            version: MinecraftVersion::new("1.20.51"),
+        });
+
+        app.insert_resource(StatusResource::new());
     }
 }
 
 fn main() {
-    init_logger(LevelFilter::Trace);
+    init_logger(LevelFilter::Info);
 
     App::new()
         .add_plugins(MinimalPlugins)

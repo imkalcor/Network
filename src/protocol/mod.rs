@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 pub mod binary;
+pub mod mcpe;
 pub mod message;
 pub mod reliability;
 
@@ -79,7 +80,7 @@ pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// This value is the maximum amount of allowed RakNet messages in one second. If the number exceeds this value, the
 /// stream gets disconnected.
-pub const MAX_MSGS_PER_SEC: u8 = 20;
+pub const MAX_MSGS_PER_SEC: u8 = 100;
 
 /// This value is the maximum number of malformed messages that the other side of the connection can send during its lifetime.
 pub const MAX_INVALID_MSGS: u8 = 20;

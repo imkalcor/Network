@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{Cursor, Error, ErrorKind, Result, Write},
     net::{SocketAddr, UdpSocket},
     sync::Arc,
@@ -14,7 +14,7 @@ use binary::{
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use bytes::{Buf, BufMut, BytesMut};
 use commons::utils::unix_timestamp;
-use log::trace;
+use log::{info, trace};
 
 use crate::{
     generic::{
@@ -31,6 +31,8 @@ use crate::{
     },
 };
 
+/// NetworkBundle ensures that the RakStream has appropriate components associated
+/// with it when it spawns.
 #[derive(Bundle)]
 pub struct NetworkBundle {
     pub info: NetworkInfo,
@@ -66,7 +68,7 @@ pub struct RakStream {
     split_window: HashMap<u16, SplitWindow>,
     recovery_window: RecoveryWindow,
 
-    receipts: Vec<u32>,
+    receipts: VecDeque<u32>,
 
     receipt_buf: BytesMut,
     msg_buf: Vec<u8>,
@@ -92,7 +94,7 @@ impl RakStream {
             message_window: MessageWindow::new(),
             split_window: HashMap::new(),
             recovery_window: RecoveryWindow::new(),
-            receipts: Vec::new(),
+            receipts: VecDeque::new(),
             receipt_buf: BytesMut::with_capacity(256),
             msg_buf: Vec::new(),
             buffer: BytesMut::with_capacity(MAX_MTU_SIZE),
@@ -358,8 +360,7 @@ impl RakStream {
         self.read_receipts(reader)?;
         trace!("[+] {:?} Received ACKs: {:?}", self.addr, self.receipts);
 
-        for i in 0..self.receipts.len() {
-            let sequence = self.receipts.remove(i);
+        while let Some(sequence) = self.receipts.pop_front() {
             self.recovery_window.acknowledge(sequence);
         }
 
@@ -373,8 +374,7 @@ impl RakStream {
         self.read_receipts(reader)?;
         trace!("[+] {:?} Received NACKs: {:?}", self.addr, self.receipts);
 
-        for i in 0..self.receipts.len() {
-            let sequence = self.receipts.remove(i);
+        while let Some(sequence) = self.receipts.pop_front() {
             if let Some(bytes) = self.recovery_window.retransmit(sequence) {
                 self.flush(&bytes[..]);
                 self.sequence_number += 1;
@@ -400,12 +400,12 @@ impl RakStream {
                     let end = U24::<LE>::deserialize(reader)?.0;
 
                     for seq in start..end {
-                        self.receipts.push(seq);
+                        self.receipts.push_back(seq);
                     }
                 }
                 1 => {
                     let seq = U24::<LE>::deserialize(reader)?.0;
-                    self.receipts.push(seq);
+                    self.receipts.push_back(seq);
                 }
                 _ => {
                     return Err(Error::new(
@@ -529,7 +529,8 @@ impl RakStream {
                 self.encode(resp, Reliability::Unreliable);
             }
             Message::GamePacket { data } => {
-                ev.send(RakNetEvent::C2SGamePacket(entity, data.to_vec()))
+                ev.send(RakNetEvent::C2SGamePacket(entity, data.to_vec()));
+                info!("{:?} {:?}", self.addr, data);
             }
             _ => {}
         }
