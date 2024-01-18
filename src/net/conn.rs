@@ -14,7 +14,7 @@ use binary::{
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use bytes::{Buf, BufMut, BytesMut};
 use commons::utils::unix_timestamp;
-use log::trace;
+use log::{info, trace};
 
 use crate::{
     generic::{
@@ -530,6 +530,7 @@ impl RakStream {
             }
             Message::GamePacket { data } => {
                 ev.send(RakNetEvent::C2SGamePacket(entity, data.to_vec()));
+                info!("{:?} {:?}", self.addr, data);
             }
             _ => {}
         }

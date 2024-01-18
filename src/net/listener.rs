@@ -8,7 +8,7 @@ use binary::prefixed::Str;
 use binary::Binary;
 use bytes::BytesMut;
 use commons::utils::unix_timestamp;
-use log::trace;
+use log::{info, trace};
 
 use crate::generic::events::{BlockReason, RakNetEvent};
 use crate::net::conn::{NetworkBundle, RakStream};
@@ -286,6 +286,7 @@ impl Listener {
                 });
 
                 self.connections.insert(addr, entity.id());
+                info!("Connections: {:?}", self.connections.len());
             }
             _ => {}
         }
