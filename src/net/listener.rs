@@ -54,9 +54,7 @@ pub struct Listener {
     read_buf: BytesMut,
     write_buf: BytesMut,
 
-    connections: HashMap<SocketAddr, Entity>,
     blocked: HashMap<SocketAddr, u64>,
-
     packets_per_sec: HashMap<SocketAddr, (Instant, u8)>,
     invalid_packets: HashMap<SocketAddr, u8>,
 }
@@ -74,7 +72,6 @@ impl Listener {
                     socket: socket.into(),
                     read_buf: BytesMut::zeroed(MAX_MTU_SIZE),
                     write_buf: BytesMut::with_capacity(MAX_MTU_SIZE),
-                    connections: HashMap::new(),
                     blocked: HashMap::new(),
                     packets_per_sec: HashMap::new(),
                     invalid_packets: HashMap::new(),
@@ -163,26 +160,22 @@ impl Listener {
         &mut self,
         addr: SocketAddr,
         len: usize,
-        query: &mut Query<(&mut RakStream, &mut NetworkInfo)>,
+        query: &mut Query<(Entity, &UDPAddress, &mut RakStream, &mut NetworkInfo)>,
         ev: &mut EventWriter<RakNetEvent>,
     ) -> bool {
-        if let Some(entity) = self.connections.get(&addr) {
-            if let Ok((mut conn, mut info)) = query.get_mut(*entity) {
-                if let Err(e) = conn.decode(&self.read_buf[..len], &mut info, ev, *entity) {
+        for (entity, udpaddr, mut stream, mut info) in query.iter_mut() {
+            if addr == udpaddr.0 {
+                if let Err(e) = stream.decode(&self.read_buf[..len], &mut info, ev, entity) {
                     debug!("[Network Error] {}", e.to_string());
+
                     ev.send(RakNetEvent::Disconnect(
-                        *entity,
+                        entity,
                         DisconnectReason::ServerDisconnect,
                     ));
                 }
 
                 return true;
             }
-
-            // Remove from the connections HashMap because it is likely that the entity got disconnected
-            // and we didn't remove it from the map.
-            self.connections.remove(&addr);
-            return true;
         }
 
         false
@@ -195,6 +188,7 @@ impl Listener {
         len: usize,
         status: &str,
         commands: &mut Commands,
+        ev: &mut EventWriter<RakNetEvent>,
     ) -> Result<()> {
         let mut reader = Cursor::new(&self.read_buf[..len]);
         let message = Message::deserialize(&mut reader)?;
@@ -265,6 +259,7 @@ impl Listener {
                 };
 
                 self.write_message(addr, resp)?;
+                ev.send(RakNetEvent::ConnectionRequest(addr));
             }
             Message::OpenConnectionRequest2 {
                 magic,
@@ -295,11 +290,11 @@ impl Listener {
                         local_addr: server_address.0,
                         remote_addr: addr,
                     },
+                    addr: UDPAddress(addr),
                     rakstream: RakStream::new(addr, self.socket.clone(), mtu_size),
                 });
 
-                self.connections.insert(addr, entity.id());
-                info!("Connections: {:?}", self.connections.len());
+                info!("Spawned Entity: {:?}", entity.id().index());
             }
             _ => {}
         }

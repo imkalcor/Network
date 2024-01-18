@@ -13,6 +13,7 @@ use self::{
 use crate::{
     generic::events::{DisconnectReason, RakNetEvent},
     protocol::{
+        binary::UDPAddress,
         mcpe::{
             BroadcastGamemode, MaxPlayers, MinecraftProtocol, MinecraftVersion, OnlinePlayers,
             PrimaryMotd, SecondaryMotd, StatusResource,
@@ -46,7 +47,7 @@ pub fn system_check_timeout(
 /// This system is responsible for reading for any messages from the UdpSocket. It handles all the Unconnected Messages
 /// and internal Connected Messages immediately while it writes an event for any Game Packets received.
 pub fn system_decode_incoming(
-    mut query: Query<(&mut RakStream, &mut NetworkInfo)>,
+    mut query: Query<(Entity, &UDPAddress, &mut RakStream, &mut NetworkInfo)>,
     mut listener: Query<&mut Listener>,
     mut ev: EventWriter<RakNetEvent>,
     mut commands: Commands,
@@ -103,7 +104,9 @@ pub fn system_decode_incoming(
             }
         };
 
-        if let Err(e) = listener.handle_unconnected_message(addr, len, status, &mut commands) {
+        if let Err(e) =
+            listener.handle_unconnected_message(addr, len, status, &mut commands, &mut ev)
+        {
             debug!("[Network Error]: {}", e.to_string());
             listener.check_invalid_packets(addr, &mut ev);
             return;

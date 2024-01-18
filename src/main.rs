@@ -66,7 +66,7 @@ impl Plugin for NetworkServer {
 }
 
 fn main() {
-    init_logger(LevelFilter::Debug);
+    init_logger(LevelFilter::Trace);
 
     App::new()
         .add_plugins(MinimalPlugins)

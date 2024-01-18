@@ -8,12 +8,11 @@ use std::{
 
 use bevy::ecs::{bundle::Bundle, component::Component, entity::Entity, event::EventWriter};
 use binary::{
-    datatypes::{I16, I64, U16, U24, U32},
+    datatypes::{I16, U16, U24, U32},
     Binary,
 };
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use bytes::{Buf, BufMut, BytesMut};
-use commons::utils::unix_timestamp;
 use log::{info, trace};
 
 use crate::{
@@ -36,6 +35,7 @@ use crate::{
 #[derive(Bundle)]
 pub struct NetworkBundle {
     pub info: NetworkInfo,
+    pub addr: UDPAddress,
     pub rakstream: RakStream,
 }
 
@@ -520,8 +520,8 @@ impl RakStream {
         match message {
             Message::ConnectedPing { client_timestamp } => {
                 let resp = Message::ConnectedPong {
-                    client_timestamp,
-                    server_timestamp: I64::new(unix_timestamp() as i64),
+                    client_timestamp: client_timestamp.clone(),
+                    server_timestamp: client_timestamp,
                 };
 
                 self.encode(resp, Reliability::Unreliable);
@@ -535,11 +535,19 @@ impl RakStream {
                     client_address: UDPAddress(self.addr),
                     system_index: I16::new(0),
                     system_addresses: SystemAddresses,
-                    request_timestamp,
-                    accept_timestamp: I64::new(unix_timestamp() as i64),
+                    request_timestamp: request_timestamp.clone(),
+                    accept_timestamp: request_timestamp,
                 };
 
-                self.encode(resp, Reliability::ReliableOrdered);
+                self.encode(resp, Reliability::Unreliable);
+            }
+            Message::NewIncomingConnection {
+                server_address: _,
+                system_addresses: _,
+                request_timestamp: _,
+                accept_timestamp: _,
+            } => {
+                ev.send(RakNetEvent::ConnectionEstablished(self.addr, entity));
             }
             Message::GamePacket { data } => {
                 ev.send(RakNetEvent::C2SGamePacket(entity, data.to_vec()));

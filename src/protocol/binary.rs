@@ -3,6 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 
+use bevy::ecs::component::Component;
 use binary::debug_impl;
 use binary::{
     datatypes::{I16, I32, U16},
@@ -14,6 +15,7 @@ use std::str::FromStr;
 
 use super::{INTERNAL_ADDRESS, SYSTEM_ADDRESS_COUNT, UNCONNECTED_MESSAGE_SEQUENCE};
 
+#[derive(Component)]
 pub struct UDPAddress(pub SocketAddr);
 debug_impl!(UDPAddress);
 
