@@ -45,7 +45,7 @@ pub fn system_check_timeout(
 
 /// This system is responsible for reading for any messages from the UdpSocket. It handles all the Unconnected Messages
 /// and internal Connected Messages immediately while it writes an event for any Game Packets received.
-pub fn system_read_from_udp(
+pub fn system_decode_incoming(
     mut query: Query<(&mut RakStream, &mut NetworkInfo)>,
     mut listener: Query<&mut Listener>,
     mut ev: EventWriter<RakNetEvent>,
@@ -122,9 +122,17 @@ pub fn system_read_from_udp(
     }
 }
 
-/// This system is responsible for flushing and batching of any messages to the UdpSocket. It handles all outgoing game packets
-/// by writing them over the Udp Network.
-pub fn system_write_to_udp(mut query: Query<&mut RakStream>, mut ev: EventReader<RakNetEvent>) {
+/// This system is responsible for flushing receipts for those sequence numbers that we did receive ACK
+/// and for those we didn't (NACK).
+pub fn system_flush_receipts(mut query: Query<&mut RakStream>) {
+    for mut stream in query.iter_mut() {
+        stream.flush_receipts();
+    }
+}
+
+/// This system is responsible for encoding outgoing datagrams to the connection's internal writing buffer. They
+/// are then flushed periodically by the `system_flush_to_udp` system.
+pub fn system_encode_outgoing(mut query: Query<&mut RakStream>, mut ev: EventReader<RakNetEvent>) {
     for event in ev.read() {
         match event {
             RakNetEvent::S2CGamePacket(entity, bytes) => {
@@ -141,7 +149,11 @@ pub fn system_write_to_udp(mut query: Query<&mut RakStream>, mut ev: EventReader
             _ => {}
         }
     }
+}
 
+/// This system is responsible for flushing of datagrams that we have written so far for all connections
+/// to the other end of the connection.
+pub fn system_flush_to_udp(mut query: Query<&mut RakStream>) {
     for mut stream in query.iter_mut() {
         stream.try_flush();
     }

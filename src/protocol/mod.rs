@@ -72,8 +72,8 @@ pub const WINDOW_SIZE: u32 = 2048;
 /// establishing a RakNet connection.
 pub const INTERNAL_ADDRESS: &str = "255.255.255.255:19132";
 
-/// RAKNET_TPS is the duration of how often in milliseconds should the RakNet logic run.
-pub const RAKNET_TPS: u128 = 100;
+/// RAKNET_TPS is the duration of how often in milliseconds should we flush outgoing packets and datagrams.
+pub const RAKNET_TPS: Duration = Duration::from_millis(100);
 
 /// This specifies the duration of how often we should be checking the outlived connections.
 pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_millis(100);

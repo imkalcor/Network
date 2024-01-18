@@ -27,7 +27,7 @@ use crate::{
         reliability::Reliability,
         DATAGRAM_HEADER_SIZE, FLAG_ACK, FLAG_DATAGRAM, FLAG_FRAGMENTED, FLAG_NACK,
         FLAG_NEEDS_B_AND_AS, FRAME_ADDITIONAL_SIZE, FRAME_HEADER_SIZE, MAX_BATCHED_PACKETS,
-        MAX_MTU_SIZE, MAX_SPLIT_PACKETS, RAKNET_TPS, UDP_HEADER_SIZE,
+        MAX_MTU_SIZE, MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
     },
 };
 
@@ -73,9 +73,6 @@ pub struct RakStream {
     receipt_buf: BytesMut,
     msg_buf: Vec<u8>,
     buffer: BytesMut,
-
-    last_acked: Instant,
-    last_flushed: Instant,
 }
 
 impl RakStream {
@@ -98,8 +95,6 @@ impl RakStream {
             receipt_buf: BytesMut::with_capacity(256),
             msg_buf: Vec::new(),
             buffer: BytesMut::with_capacity(MAX_MTU_SIZE),
-            last_acked: Instant::now(),
-            last_flushed: Instant::now(),
         }
     }
 
@@ -122,12 +117,10 @@ impl RakStream {
 
         for split_index in 0..split_count {
             let content = fragments[split_index as usize];
-            let max_len = self.buffer.len() - DATAGRAM_HEADER_SIZE - FRAME_HEADER_SIZE;
+            let max_len = self.buffer.capacity() - self.buffer.len() - FRAME_HEADER_SIZE;
 
-            if split || content.len() > max_len || reliability != Reliability::ReliableOrdered {
+            if content.len() > max_len {
                 self.flush(&self.buffer);
-                self.last_flushed = Instant::now();
-
                 self.recovery_window
                     .add(self.sequence_number, self.buffer.clone().into());
                 self.sequence_number += 1;
@@ -163,6 +156,14 @@ impl RakStream {
             }
 
             self.buffer.write_all(&content).unwrap();
+
+            if reliability != Reliability::ReliableOrdered {
+                self.flush(&self.buffer);
+                self.recovery_window
+                    .add(self.sequence_number, self.buffer.clone().into());
+                self.sequence_number += 1;
+                self.buffer.clear();
+            }
         }
 
         self.msg_buf.clear();
@@ -244,19 +245,6 @@ impl RakStream {
 
         if !self.sequence_window.receive(seq) {
             return Ok(());
-        }
-
-        if self.last_acked.elapsed().as_millis() > RAKNET_TPS {
-            self.last_acked = Instant::now();
-            self.sequence_window.shift();
-
-            if self.sequence_window.acks.len() > 0 {
-                self.write_ack();
-            }
-
-            if self.sequence_window.nacks.len() > 0 {
-                self.write_nack();
-            }
         }
 
         let mut count = 0;
@@ -377,8 +365,9 @@ impl RakStream {
         while let Some(sequence) = self.receipts.pop_front() {
             if let Some(bytes) = self.recovery_window.retransmit(sequence) {
                 self.flush(&bytes[..]);
+
+                self.recovery_window.add(self.sequence_number, bytes);
                 self.sequence_number += 1;
-                self.last_flushed = Instant::now();
             }
         }
 
@@ -417,6 +406,20 @@ impl RakStream {
         }
 
         Ok(())
+    }
+
+    /// This flushes any receipts from our side such as ACK or NACK for the packets we received
+    /// and we didn't receive respectively.
+    pub fn flush_receipts(&mut self) {
+        self.sequence_window.shift();
+
+        if self.sequence_window.acks.len() > 0 {
+            self.write_ack();
+        }
+
+        if self.sequence_window.nacks.len() > 0 {
+            self.write_nack();
+        }
     }
 
     /// Writes a Positive Acknowledgement Receipt to the other end of the connection containing all the
@@ -538,15 +541,16 @@ impl RakStream {
         Ok(())
     }
 
-    /// Tries to flush the packets written so far to the socket depending upon how long back we
-    /// flushed.
+    /// Tries to flush the packets written so far to the other end of the connection if the buffer
+    /// is not empty.
     pub fn try_flush(&mut self) {
-        if self.last_flushed.elapsed().as_millis() > RAKNET_TPS && self.buffer.len() > 0 {
-            self.flush(&self.buffer);
-            self.sequence_number += 1;
-            self.last_flushed = Instant::now();
-            self.buffer.clear();
+        if self.buffer.len() == 0 {
+            return;
         }
+
+        self.flush(&self.buffer);
+        self.sequence_number += 1;
+        self.buffer.clear();
     }
 
     /// Flushes the provided encoded datagram message by appending the header of the datagram with

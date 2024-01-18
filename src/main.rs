@@ -6,14 +6,14 @@ use generic::events::{NetworkEvent, RakNetEvent};
 use log::LevelFilter;
 use net::{
     listener::{Listener, ServerBundle},
-    system_check_timeout, system_read_from_udp, system_write_to_udp,
+    system_check_timeout, system_decode_incoming, system_flush_receipts, system_flush_to_udp,
 };
 use protocol::{
     mcpe::{
         BroadcastGamemode, MaxPlayers, MinecraftProtocol, MinecraftVersion, OnlinePlayers,
         PrimaryMotd, SecondaryMotd, StatusResource,
     },
-    RAKNET_CHECK_TIMEOUT,
+    RAKNET_CHECK_TIMEOUT, RAKNET_TPS,
 };
 
 pub mod generic;
@@ -37,8 +37,12 @@ impl Plugin for NetworkServer {
     fn build(&self, app: &mut App) {
         app.add_event::<RakNetEvent>();
         app.add_event::<NetworkEvent>();
-        app.add_systems(PreUpdate, system_read_from_udp);
-        app.add_systems(PreUpdate, system_write_to_udp);
+        app.add_systems(PreUpdate, system_decode_incoming);
+        app.add_systems(
+            PreUpdate,
+            system_flush_receipts.run_if(on_timer(RAKNET_TPS)),
+        );
+        app.add_systems(PreUpdate, system_flush_to_udp.run_if(on_timer(RAKNET_TPS)));
         app.add_systems(
             PreUpdate,
             system_check_timeout.run_if(on_timer(RAKNET_CHECK_TIMEOUT)),
