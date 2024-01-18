@@ -132,6 +132,7 @@ build_message! {
     };
     0x10; ConnectionRequestAccepted {
         client_address: UDPAddress,
+        system_index: I16<BE>,
         system_addresses: SystemAddresses,
         request_timestamp: I64<BE>,
         accept_timestamp: I64<BE>

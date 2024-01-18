@@ -8,9 +8,9 @@ use binary::prefixed::Str;
 use binary::Binary;
 use bytes::BytesMut;
 use commons::utils::unix_timestamp;
-use log::{info, trace};
+use log::{debug, info, trace};
 
-use crate::generic::events::{BlockReason, RakNetEvent};
+use crate::generic::events::{BlockReason, DisconnectReason, RakNetEvent};
 use crate::net::conn::{NetworkBundle, RakStream};
 use crate::protocol::binary::UDPAddress;
 use crate::protocol::mcpe::{
@@ -157,22 +157,35 @@ impl Listener {
         ev.send(RakNetEvent::Blocked(addr, RAKNET_BLOCK_DUR, reason));
     }
 
-    /// Checks if the message received on the buffer is a Connected Message. If it is, then it processes the message
-    /// and handles it gracefully.
+    /// Checks if the message received on the buffer is a Connected Message. Returns whether the message was a connected
+    /// one and that it handled it appropriately.
     pub fn handle_connected_message(
         &mut self,
         addr: SocketAddr,
         len: usize,
         query: &mut Query<(&mut RakStream, &mut NetworkInfo)>,
         ev: &mut EventWriter<RakNetEvent>,
-    ) -> Result<bool> {
+    ) -> bool {
         if let Some(entity) = self.connections.get(&addr) {
-            let (mut conn, mut info) = query.get_mut(*entity).unwrap();
-            conn.decode(&self.read_buf[..len], &mut info, ev, *entity)?;
-            return Ok(true);
+            if let Ok((mut conn, mut info)) = query.get_mut(*entity) {
+                if let Err(e) = conn.decode(&self.read_buf[..len], &mut info, ev, *entity) {
+                    debug!("[Network Error] {}", e.to_string());
+                    ev.send(RakNetEvent::Disconnect(
+                        *entity,
+                        DisconnectReason::ServerDisconnect,
+                    ));
+                }
+
+                return true;
+            }
+
+            // Remove from the connections HashMap because it is likely that the entity got disconnected
+            // and we didn't remove it from the map.
+            self.connections.remove(&addr);
+            return true;
         }
 
-        return Ok(false);
+        false
     }
 
     /// Handles an unconnected message received on the buffer.

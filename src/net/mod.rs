@@ -74,17 +74,8 @@ pub fn system_decode_incoming(
             return;
         }
 
-        match listener.handle_connected_message(addr, len, &mut query, &mut ev) {
-            Ok(result) => {
-                if result {
-                    return;
-                }
-            }
-            Err(e) => {
-                debug!("[Network Error]: {}", e.to_string());
-                listener.check_invalid_packets(addr, &mut ev);
-                return;
-            }
+        if listener.handle_connected_message(addr, len, &mut query, &mut ev) {
+            return;
         }
 
         if let Err(e) = write!(
@@ -143,9 +134,6 @@ pub fn system_encode_outgoing(mut query: Query<&mut RakStream>, mut ev: EventRea
 
                 conn.encode(message, Reliability::ReliableOrdered);
             }
-            RakNetEvent::Blocked(addr, dur, reason) => {
-                debug!("Blocked {:?} for {:?} - Duration: {:?}", addr, reason, dur);
-            }
             _ => {}
         }
     }
@@ -156,5 +144,34 @@ pub fn system_encode_outgoing(mut query: Query<&mut RakStream>, mut ev: EventRea
 pub fn system_flush_to_udp(mut query: Query<&mut RakStream>) {
     for mut stream in query.iter_mut() {
         stream.try_flush();
+    }
+}
+
+/// This system is responsible for checking the connection states, such as logging when a connection gets blocked,
+/// handling disconnection of a connection, etc.
+pub fn system_check_connections(
+    mut ev: EventReader<RakNetEvent>,
+    mut conn: Query<&mut RakStream>,
+    mut commands: Commands,
+) {
+    for event in ev.read() {
+        match event {
+            RakNetEvent::Disconnect(entity, reason) => {
+                if let Ok(mut conn) = conn.get_mut(*entity) {
+                    debug!(
+                        "[Network] Entity ID {:?} has been disconnected due to {:?}",
+                        entity.index(),
+                        reason
+                    );
+
+                    conn.disconnect();
+                    commands.entity(*entity).despawn();
+                }
+            }
+            RakNetEvent::Blocked(addr, dur, reason) => {
+                debug!("Blocked {:?} for {:?} - Duration: {:?}", addr, reason, dur);
+            }
+            _ => {}
+        }
     }
 }

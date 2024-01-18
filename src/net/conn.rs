@@ -18,7 +18,7 @@ use log::{info, trace};
 
 use crate::{
     generic::{
-        events::RakNetEvent,
+        events::{DisconnectReason, RakNetEvent},
         window::{MessageWindow, RecoveryWindow, SequenceWindow, SplitWindow},
     },
     protocol::{
@@ -26,8 +26,8 @@ use crate::{
         message::Message,
         reliability::Reliability,
         DATAGRAM_HEADER_SIZE, FLAG_ACK, FLAG_DATAGRAM, FLAG_FRAGMENTED, FLAG_NACK,
-        FLAG_NEEDS_B_AND_AS, FRAME_ADDITIONAL_SIZE, FRAME_HEADER_SIZE, MAX_BATCHED_PACKETS,
-        MAX_MTU_SIZE, MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
+        FLAG_NEEDS_B_AND_AS, FRAME_ADDITIONAL_SIZE, FRAME_HEADER_SIZE, LOGIN_PACKET_ID,
+        MAX_BATCHED_PACKETS, MAX_MTU_SIZE, MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
     },
 };
 
@@ -109,7 +109,7 @@ impl RakStream {
 
         let split_count = fragments.len() as u32;
         let split_id = self.split_id;
-        let split = split_count > 0;
+        let split = split_count > 1;
 
         if split {
             self.split_id += 1;
@@ -147,6 +147,7 @@ impl RakStream {
 
             if reliability.sequenced_or_ordered() {
                 U24::<LE>::new(order_index).serialize(&mut self.buffer);
+                self.buffer.put_u8(0); // order index
             }
 
             if split {
@@ -212,6 +213,14 @@ impl RakStream {
     ) -> Result<()> {
         let mut reader = Cursor::new(buffer);
         let header = reader.read_u8()?;
+
+        if header == LOGIN_PACKET_ID {
+            ev.send(RakNetEvent::Disconnect(
+                entity,
+                DisconnectReason::DuplicateLogin,
+            ));
+            return Ok(());
+        }
 
         if header & FLAG_DATAGRAM == 0 {
             return Err(Error::new(
@@ -524,16 +533,23 @@ impl RakStream {
             } => {
                 let resp = Message::ConnectionRequestAccepted {
                     client_address: UDPAddress(self.addr),
+                    system_index: I16::new(0),
                     system_addresses: SystemAddresses,
                     request_timestamp,
                     accept_timestamp: I64::new(unix_timestamp() as i64),
                 };
 
-                self.encode(resp, Reliability::Unreliable);
+                self.encode(resp, Reliability::ReliableOrdered);
             }
             Message::GamePacket { data } => {
                 ev.send(RakNetEvent::C2SGamePacket(entity, data.to_vec()));
                 info!("{:?} {:?}", self.addr, data);
+            }
+            Message::DisconnectNotification {} => {
+                ev.send(RakNetEvent::Disconnect(
+                    entity,
+                    DisconnectReason::ClientDisconnect,
+                ));
             }
             _ => {}
         }
@@ -564,5 +580,15 @@ impl RakStream {
 
         let buffer: &[u8] = &[&header[..], &buffer[..]].concat();
         self.socket.send_to(&buffer, self.addr).unwrap();
+    }
+
+    /// Handles graceful disconnection of the client, it flushes all the remaining packets we have written so far
+    /// and also sends the Disconnect Notification to the client.
+    pub fn disconnect(&mut self) {
+        self.encode(
+            Message::DisconnectNotification {},
+            Reliability::ReliableOrdered,
+        );
+        self.try_flush();
     }
 }

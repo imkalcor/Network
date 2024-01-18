@@ -89,7 +89,11 @@ pub const MAX_INVALID_MSGS: u8 = 20;
 pub const RAKNET_BLOCK_DUR: Duration = Duration::from_secs(10);
 
 /// If a RakStream is not responding for more than this time in milliseconds then we assume it is a timeout.
-pub const RAKNET_TIMEOUT: u128 = 100;
+pub const RAKNET_TIMEOUT: u128 = 5000;
+
+/// Login Packet ID corresponds to the ID of the OpenConnectionRequest1 packet sent by the client to check
+/// whether we have a duplicate login.
+pub const LOGIN_PACKET_ID: u8 = 0x05;
 
 /// Unconnected Message Sequence is a sequence of bytes found in every Unconnected RakNet message.
 pub const UNCONNECTED_MESSAGE_SEQUENCE: [u8; 16] = [

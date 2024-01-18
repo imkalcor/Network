@@ -45,15 +45,17 @@ impl SequenceWindow {
         }
 
         if seq == self.start {
-            for i in self.start..self.end {
-                if !self.acks.contains(&i) {
-                    break;
-                }
-
+            // got a contiguous packet, shift the receive window
+            // this packet might complete a sequence of out-of-order packets, so we incrementally check the indexes
+            // to see how far to shift the window, and stop as soon as we either find a gap or have an empty window
+            while self.acks.contains(&self.start) {
                 self.start += 1;
                 self.end += 1;
             }
         } else {
+            // we got a gap - a later packet arrived before earlier ones did.
+            // we add the earlier ones to the nack queue.
+            // if the missing packets arrive before the end of the tick, they'll be removed from nack queue.
             for i in self.start..seq {
                 if !self.acks.contains(&i) {
                     self.nacks.push(i);
@@ -67,8 +69,12 @@ impl SequenceWindow {
     /// Shifts the window, this should be called when we a RakNet tick has passed and we should
     /// stop expecting a certain set of sequences. At this stage, we flush our ACKs and NACKs.
     pub fn shift(&mut self) {
-        self.start += self.highest + 1;
-        self.end += self.highest + 1;
+        let diff = self.highest - self.start;
+
+        if diff > 0 {
+            self.start += diff;
+            self.end += diff;
+        }
     }
 }
 
@@ -103,12 +109,8 @@ impl MessageWindow {
         self.indexes.push(index);
 
         if index == self.start {
-            for i in self.start..self.end {
-                if !self.indexes.contains(&i) {
-                    break;
-                }
-
-                self.indexes.retain(|&x| x != i);
+            while self.indexes.contains(&self.start) {
+                self.indexes.retain(|&x| x != self.start);
                 self.start += 1;
                 self.end += 1;
             }
