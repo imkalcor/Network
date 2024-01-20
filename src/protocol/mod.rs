@@ -78,6 +78,9 @@ pub const RAKNET_TPS: Duration = Duration::from_millis(100);
 /// This specifies the duration of how often we should be checking the outlived connections.
 pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 
+/// This specifies the duration of how often should we be building the MCPE Status.
+pub const UPDATE_MCPE_STATUS: Duration = Duration::from_secs(4);
+
 /// This value is the maximum amount of allowed RakNet messages in one second. If the number exceeds this value, the
 /// stream gets disconnected.
 pub const MAX_MSGS_PER_SEC: u8 = 100;

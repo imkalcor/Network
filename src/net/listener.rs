@@ -22,7 +22,6 @@ use crate::protocol::{
     MAX_INVALID_MSGS, MAX_MSGS_PER_SEC, MAX_MTU_SIZE, PROTOCOL_VERSION, RAKNET_BLOCK_DUR,
     UDP_HEADER_SIZE,
 };
-use rand::Rng;
 use std::collections::HashMap;
 use std::io::{Cursor, Result};
 use std::net::{SocketAddr, UdpSocket};
@@ -34,6 +33,7 @@ use super::conn::NetworkInfo;
 #[derive(Bundle)]
 pub struct ServerBundle {
     pub listener: Listener,
+    pub info: ListenerInfo,
     pub primary_motd: PrimaryMotd,
     pub secondary_motd: SecondaryMotd,
     pub online_players: OnlinePlayers,
@@ -43,17 +43,23 @@ pub struct ServerBundle {
     pub version: MinecraftVersion,
 }
 
+#[derive(Component)]
+pub struct ListenerInfo {
+    pub addr: SocketAddr,
+    pub guid: i64,
+}
+
 /// Minecraft Listener built on top of the UDP Protocol with built-in reliability (also known as RakNet)
 #[derive(Component)]
 pub struct Listener {
     pub addr: SocketAddr,
     pub guid: i64,
-
     socket: Arc<UdpSocket>,
 
     read_buf: BytesMut,
     write_buf: BytesMut,
 
+    connections: HashMap<SocketAddr, Entity>,
     blocked: HashMap<SocketAddr, u64>,
     packets_per_sec: HashMap<SocketAddr, (Instant, u8)>,
     invalid_packets: HashMap<SocketAddr, u8>,
@@ -68,10 +74,11 @@ impl Listener {
 
                 Ok(Self {
                     addr,
-                    guid: rand::thread_rng().gen(),
+                    guid: rand::random(),
                     socket: socket.into(),
                     read_buf: BytesMut::zeroed(MAX_MTU_SIZE),
                     write_buf: BytesMut::with_capacity(MAX_MTU_SIZE),
+                    connections: HashMap::new(),
                     blocked: HashMap::new(),
                     packets_per_sec: HashMap::new(),
                     invalid_packets: HashMap::new(),
@@ -160,22 +167,26 @@ impl Listener {
         &mut self,
         addr: SocketAddr,
         len: usize,
-        query: &mut Query<(Entity, &UDPAddress, &mut RakStream, &mut NetworkInfo)>,
+        query: &mut Query<(&mut RakStream, &mut NetworkInfo)>,
         ev: &mut EventWriter<RakNetEvent>,
     ) -> bool {
-        for (entity, udpaddr, mut stream, mut info) in query.iter_mut() {
-            if addr == udpaddr.0 {
-                if let Err(e) = stream.decode(&self.read_buf[..len], &mut info, ev, entity) {
+        if let Some(entity) = self.connections.get(&addr) {
+            if let Ok((mut stream, mut info)) = query.get_mut(*entity) {
+                if let Err(e) = stream.decode(&self.read_buf[..len], &mut info, ev, *entity) {
                     debug!("[Network Error] {}", e.to_string());
 
                     ev.send(RakNetEvent::Disconnect(
-                        entity,
+                        *entity,
                         DisconnectReason::ServerDisconnect,
                     ));
                 }
 
                 return true;
             }
+
+            // Remove the entry because the entity did not exist.
+            self.connections.remove(&addr);
+            return true;
         }
 
         false
@@ -294,6 +305,7 @@ impl Listener {
                     rakstream: RakStream::new(addr, self.socket.clone(), mtu_size),
                 });
 
+                self.connections.insert(addr, entity.id());
                 info!("Spawned Entity: {:?}", entity.id().index());
             }
             _ => {}

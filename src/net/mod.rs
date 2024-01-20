@@ -1,19 +1,18 @@
 use bevy::ecs::{
     entity::Entity,
     event::{EventReader, EventWriter},
-    system::{Commands, Query, ResMut},
+    system::{Commands, Query, Res, ResMut},
 };
 use binary::prefixed::UnsizedBytes;
 use log::debug;
 
 use self::{
     conn::{NetworkInfo, RakStream},
-    listener::Listener,
+    listener::{Listener, ListenerInfo},
 };
 use crate::{
     generic::events::{DisconnectReason, RakNetEvent},
     protocol::{
-        binary::UDPAddress,
         mcpe::{
             BroadcastGamemode, MaxPlayers, MinecraftProtocol, MinecraftVersion, OnlinePlayers,
             PrimaryMotd, SecondaryMotd, StatusResource,
@@ -44,15 +43,9 @@ pub fn system_check_timeout(
     }
 }
 
-/// This system is responsible for reading for any messages from the UdpSocket. It handles all the Unconnected Messages
-/// and internal Connected Messages immediately while it writes an event for any Game Packets received.
-pub fn system_decode_incoming(
-    mut query: Query<(Entity, &UDPAddress, &mut RakStream, &mut NetworkInfo)>,
-    mut listener: Query<&mut Listener>,
-    mut ev: EventWriter<RakNetEvent>,
-    mut commands: Commands,
-    mut status_res: ResMut<StatusResource>,
-    status: Query<(
+/// This system is responsible for building the MCPE Status that is sent in the Unconnected Pong message.
+pub fn system_update_status(
+    query: Query<(
         &PrimaryMotd,
         &SecondaryMotd,
         &OnlinePlayers,
@@ -60,11 +53,48 @@ pub fn system_decode_incoming(
         &MinecraftProtocol,
         &MinecraftVersion,
         &BroadcastGamemode,
+        &ListenerInfo,
     )>,
+    mut status: ResMut<StatusResource>,
+) {
+    let query = query.get_single().unwrap();
+    status.bytes.clear();
+
+    if let Err(e) = write!(
+        &mut status.bytes,
+        "MCPE;{};{};{};{};{};{};{};{};1;{};",
+        query.0.get(),
+        query.4.get(),
+        query.5.get(),
+        query.2.get(),
+        query.3.get(),
+        query.7.guid,
+        query.1.get(),
+        query.6.get(),
+        query.7.addr.port()
+    ) {
+        debug!("[Status Error]: {}", e.to_string());
+        return;
+    }
+}
+
+/// This system is responsible for reading for any messages from the UdpSocket. It handles all the Unconnected Messages
+/// and internal Connected Messages immediately while it writes an event for any Game Packets received.
+pub fn system_decode_incoming(
+    mut query: Query<(&mut RakStream, &mut NetworkInfo)>,
+    mut listener: Query<&mut Listener>,
+    mut ev: EventWriter<RakNetEvent>,
+    mut commands: Commands,
+    status: Res<StatusResource>,
 ) {
     let mut listener = listener.get_single_mut().unwrap();
-    let status = status.get_single().unwrap();
-    let status_bytes = &mut status_res.bytes;
+    let status = match std::str::from_utf8(&status.bytes) {
+        Ok(status) => status,
+        Err(e) => {
+            debug!("[Status Error]: {}", e.to_string());
+            return;
+        }
+    };
 
     if let Ok((len, addr)) = listener.try_recv() {
         if listener.is_blocked(addr) {
@@ -79,31 +109,6 @@ pub fn system_decode_incoming(
             return;
         }
 
-        if let Err(e) = write!(
-            status_bytes,
-            "MCPE;{};{};{};{};{};{};{};{};1;{};",
-            status.0.get(),
-            status.4.get(),
-            status.5.get(),
-            status.2.get(),
-            status.3.get(),
-            listener.guid,
-            status.1.get(),
-            status.6.get(),
-            listener.addr.port()
-        ) {
-            debug!("[Network Error]: {}", e.to_string());
-            return;
-        }
-
-        let status = match std::str::from_utf8(&status_bytes) {
-            Ok(status) => status,
-            Err(e) => {
-                debug!("[Network Error]: {}", e.to_string());
-                return;
-            }
-        };
-
         if let Err(e) =
             listener.handle_unconnected_message(addr, len, status, &mut commands, &mut ev)
         {
@@ -111,8 +116,6 @@ pub fn system_decode_incoming(
             listener.check_invalid_packets(addr, &mut ev);
             return;
         }
-
-        status_bytes.clear();
     }
 }
 
