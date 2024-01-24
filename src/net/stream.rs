@@ -8,16 +8,17 @@ use std::{
 
 use bevy::ecs::{bundle::Bundle, component::Component, entity::Entity, event::EventWriter};
 use binary::{
-    datatypes::{I16, U16, U24, U32},
+    datatypes::{I16, I64, U16, U24, U32},
     Binary,
 };
 use byteorder::{ReadBytesExt, WriteBytesExt, BE, LE};
 use bytes::{Buf, BufMut, BytesMut};
+use commons::utils::unix_timestamp;
 use log::{info, trace};
 
 use crate::{
     generic::{
-        events::{DisconnectReason, RakNetEvent},
+        events::RakNetEvent,
         window::{MessageWindow, RecoveryWindow, SequenceWindow, SplitWindow},
     },
     protocol::{
@@ -26,31 +27,38 @@ use crate::{
         reliability::Reliability,
         DATAGRAM_HEADER_SIZE, FLAG_ACK, FLAG_DATAGRAM, FLAG_FRAGMENTED, FLAG_NACK,
         FLAG_NEEDS_B_AND_AS, FRAME_ADDITIONAL_SIZE, FRAME_HEADER_SIZE, LOGIN_PACKET_ID,
-        MAX_BATCHED_PACKETS, MAX_MTU_SIZE, MAX_SPLIT_PACKETS, UDP_HEADER_SIZE,
+        MAX_BATCHED_PACKETS, MAX_MESSAGE_SIZE, MAX_MTU_SIZE, MAX_RECEIPT_SIZE, MAX_SPLIT_PACKETS,
+        UDP_HEADER_SIZE,
     },
 };
 
-/// NetworkBundle ensures that the RakStream has appropriate components associated
-/// with it when it spawns.
+/// StreamBundle contains components that are required to be spawned for an entity representing
+/// an established RakNet connection.
 #[derive(Bundle)]
-pub struct NetworkBundle {
+pub struct StreamBundle {
     pub info: NetworkInfo,
-    pub addr: UDPAddress,
+    pub status: NetworkStatus,
     pub rakstream: RakStream,
 }
 
-/// Network Information about a connected RakNet client.
+/// NetworkInfo contains the local and the remote address of the established RakNet Connection.
 #[derive(Component)]
 pub struct NetworkInfo {
-    pub last_activity: Instant,
-    pub latency: Duration,
-    pub ping: u64,
     pub local_addr: SocketAddr,
     pub remote_addr: SocketAddr,
 }
 
-/// RakNetEncoder handles the encoding of RakNet datagrams, ACKs, NACKs and sends them over the wire.
-/// It also supports batching of outgoing datagrams to ensure network efficiency.
+/// NetworkStatus contains the current status information of the network such as the ping, latency or last activity
+/// of the other end of the connection.
+#[derive(Component)]
+pub struct NetworkStatus {
+    pub ping: u64,
+    pub latency: Duration,
+    pub last_activity: Instant,
+}
+
+/// RakStream represents a component that handles reliable encoding and decoding of messages, receiepts from the
+/// other end of the connection.
 #[derive(Component)]
 pub struct RakStream {
     addr: SocketAddr,
@@ -70,8 +78,8 @@ pub struct RakStream {
 
     receipts: VecDeque<u32>,
 
-    receipt_buf: BytesMut,
-    msg_buf: Vec<u8>,
+    receiptbuf: BytesMut,
+    msgbuf: BytesMut,
     buffer: BytesMut,
 }
 
@@ -92,8 +100,8 @@ impl RakStream {
             split_window: HashMap::new(),
             recovery_window: RecoveryWindow::new(),
             receipts: VecDeque::new(),
-            receipt_buf: BytesMut::with_capacity(256),
-            msg_buf: Vec::new(),
+            receiptbuf: BytesMut::with_capacity(MAX_RECEIPT_SIZE),
+            msgbuf: BytesMut::with_capacity(MAX_MESSAGE_SIZE),
             buffer: BytesMut::with_capacity(MAX_MTU_SIZE),
         }
     }
@@ -101,8 +109,8 @@ impl RakStream {
     /// Encodes the provided message with the specified Reliability and batches it for transmission
     /// to the other end of the connection whenever possible.
     pub fn encode(&mut self, message: Message, reliability: Reliability) {
-        message.serialize(&mut self.msg_buf);
-        let fragments = self.split(&self.msg_buf);
+        message.serialize(&mut self.msgbuf);
+        let fragments = self.split(&self.msgbuf);
 
         let order_index = self.order_index;
         self.order_index += 1;
@@ -167,7 +175,7 @@ impl RakStream {
             }
         }
 
-        self.msg_buf.clear();
+        self.msgbuf.clear();
     }
 
     /// Splits the encoded message into multiple fragments if it exceeds the maximum size of a datagram.
@@ -207,7 +215,6 @@ impl RakStream {
     pub fn decode(
         &mut self,
         buffer: &[u8],
-        info: &mut NetworkInfo,
         ev: &mut EventWriter<RakNetEvent>,
         entity: Entity,
     ) -> Result<()> {
@@ -215,10 +222,7 @@ impl RakStream {
         let header = reader.read_u8()?;
 
         if header == LOGIN_PACKET_ID {
-            ev.send(RakNetEvent::Disconnect(
-                entity,
-                DisconnectReason::DuplicateLogin,
-            ));
+            ev.send(RakNetEvent::DuplicateLogin(entity));
             return Ok(());
         }
 
@@ -229,14 +233,14 @@ impl RakStream {
             ));
         }
 
-        info.last_activity = Instant::now();
+        ev.send(RakNetEvent::LastActivity(entity, Instant::now()));
 
         if header & FLAG_ACK != 0 {
-            return self.decode_ack(&mut reader, info);
+            return self.decode_ack(&mut reader, entity, ev);
         }
 
         if header & FLAG_NACK != 0 {
-            return self.decode_nack(&mut reader, info);
+            return self.decode_nack(&mut reader, entity, ev);
         }
 
         self.decode_datagram(&mut reader, ev, entity)
@@ -353,7 +357,12 @@ impl RakStream {
 
     /// This decodes a Positive Acknowledgement Receipt from the other end of the connection by removing it
     /// from the recovery queue.
-    fn decode_ack(&mut self, reader: &mut Cursor<&[u8]>, info: &mut NetworkInfo) -> Result<()> {
+    fn decode_ack(
+        &mut self,
+        reader: &mut Cursor<&[u8]>,
+        entity: Entity,
+        ev: &mut EventWriter<RakNetEvent>,
+    ) -> Result<()> {
         self.read_receipts(reader)?;
         trace!("[+] {:?} Received ACKs: {:?}", self.addr, self.receipts);
 
@@ -361,13 +370,18 @@ impl RakStream {
             self.recovery_window.acknowledge(sequence);
         }
 
-        info.latency = self.recovery_window.rtt();
+        ev.send(RakNetEvent::Latency(entity, self.recovery_window.rtt()));
         Ok(())
     }
 
     /// This decodes a Negative Acknowledgement Receipt from the other end of the connection by retransmitting
     /// the packet from the recovery queue.
-    fn decode_nack(&mut self, reader: &mut Cursor<&[u8]>, info: &mut NetworkInfo) -> Result<()> {
+    fn decode_nack(
+        &mut self,
+        reader: &mut Cursor<&[u8]>,
+        entity: Entity,
+        ev: &mut EventWriter<RakNetEvent>,
+    ) -> Result<()> {
         self.read_receipts(reader)?;
         trace!("[+] {:?} Received NACKs: {:?}", self.addr, self.receipts);
 
@@ -380,7 +394,7 @@ impl RakStream {
             }
         }
 
-        info.latency = self.recovery_window.rtt();
+        ev.send(RakNetEvent::Latency(entity, self.recovery_window.rtt()));
         Ok(())
     }
 
@@ -439,7 +453,7 @@ impl RakStream {
             self.addr,
             &self.sequence_window.acks
         );
-        let _ = self.receipt_buf.write_u8(FLAG_DATAGRAM | FLAG_ACK);
+        let _ = self.receiptbuf.write_u8(FLAG_DATAGRAM | FLAG_ACK);
         self.write_receipts(false);
     }
 
@@ -451,7 +465,7 @@ impl RakStream {
             self.addr,
             &self.sequence_window.nacks
         );
-        let _ = self.receipt_buf.write_u8(FLAG_DATAGRAM | FLAG_NACK);
+        let _ = self.receiptbuf.write_u8(FLAG_DATAGRAM | FLAG_NACK);
         self.write_receipts(true);
     }
 
@@ -465,7 +479,7 @@ impl RakStream {
         };
 
         sequences.sort();
-        self.receipt_buf.put_i16(0);
+        self.receiptbuf.put_i16(0);
 
         let mut first = sequences[0];
         let mut last = sequences[0];
@@ -483,12 +497,12 @@ impl RakStream {
             }
 
             if first == last {
-                self.receipt_buf.put_u8(1);
-                U24::<LE>::new(first).serialize(&mut self.receipt_buf);
+                self.receiptbuf.put_u8(1);
+                U24::<LE>::new(first).serialize(&mut self.receiptbuf);
             } else {
-                self.receipt_buf.put_u8(0);
-                U24::<LE>::new(first).serialize(&mut self.receipt_buf);
-                U24::<LE>::new(last).serialize(&mut self.receipt_buf);
+                self.receiptbuf.put_u8(0);
+                U24::<LE>::new(first).serialize(&mut self.receiptbuf);
+                U24::<LE>::new(last).serialize(&mut self.receiptbuf);
             }
 
             first = sequence;
@@ -496,11 +510,11 @@ impl RakStream {
             record_count += 1;
         }
 
-        let mut reserved = &mut self.receipt_buf[1..3];
+        let mut reserved = &mut self.receiptbuf[1..3];
         reserved.put_i16(record_count);
 
-        self.socket.send_to(&self.receipt_buf, self.addr).unwrap();
-        self.receipt_buf.clear();
+        self.socket.send_to(&self.receiptbuf, self.addr).unwrap();
+        self.receiptbuf.clear();
         sequences.clear();
     }
 
@@ -526,6 +540,13 @@ impl RakStream {
 
                 self.encode(resp, Reliability::Unreliable);
             }
+            Message::ConnectedPong {
+                client_timestamp,
+                server_timestamp,
+            } => {
+                let ping = server_timestamp.0 - client_timestamp.0;
+                ev.send(RakNetEvent::Ping(entity, ping as u64));
+            }
             Message::ConnectionRequest {
                 client_guid: _,
                 request_timestamp,
@@ -541,6 +562,23 @@ impl RakStream {
 
                 self.encode(resp, Reliability::Unreliable);
             }
+            Message::ConnectionRequestAccepted {
+                client_address: _,
+                system_index: _,
+                system_addresses,
+                request_timestamp,
+                accept_timestamp,
+            } => {
+                let resp = Message::NewIncomingConnection {
+                    server_address: UDPAddress(self.addr),
+                    system_addresses,
+                    request_timestamp,
+                    accept_timestamp,
+                };
+
+                self.encode(resp, Reliability::Unreliable);
+                ev.send(RakNetEvent::ConnectionEstablished(self.addr, entity));
+            }
             Message::NewIncomingConnection {
                 server_address: _,
                 system_addresses: _,
@@ -550,15 +588,24 @@ impl RakStream {
                 ev.send(RakNetEvent::ConnectionEstablished(self.addr, entity));
             }
             Message::GamePacket { data } => {
-                ev.send(RakNetEvent::C2SGamePacket(entity, data.to_vec()));
+                ev.send(RakNetEvent::IncomingBatch(entity, data.to_vec()));
                 info!("{:?} {:?}", self.addr, data);
             }
             Message::DisconnectNotification {} => {
-                ev.send(RakNetEvent::Disconnect(
-                    entity,
-                    DisconnectReason::ClientDisconnect,
-                ));
+                ev.send(RakNetEvent::Disconnect(entity));
             }
+            Message::DetectLostConnections {} => {
+                let resp = Message::ConnectedPing {
+                    client_timestamp: I64::new(unix_timestamp() as i64),
+                };
+
+                self.encode(resp, Reliability::Unreliable);
+            }
+            Message::IncompatibleProtocolVersion {
+                server_protocol,
+                magic: _,
+                server_guid: _,
+            } => ev.send(RakNetEvent::IncompatibleProtocol(entity, server_protocol.0)),
             _ => {}
         }
 

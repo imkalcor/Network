@@ -8,9 +8,12 @@ pub struct StatusResource {
 
 impl StatusResource {
     pub fn new() -> Self {
-        Self {
-            bytes: BytesMut::with_capacity(300),
-        }
+        let mut bytes = BytesMut::with_capacity(300);
+        let status =
+            "MCPE;RakNet;390;1.14.60;0;10;13253860892328930865;Blazingly fast;Survival;1;19132;";
+        bytes.extend_from_slice(&status.as_bytes());
+
+        Self { bytes }
     }
 }
 

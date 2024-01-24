@@ -13,6 +13,12 @@ pub const PROTOCOL_VERSION: u8 = 11;
 /// into smaller encapsulated frames.
 pub const MAX_MTU_SIZE: usize = 1500;
 
+/// RakNet Messages cannot exceed this size. If they do, they are rejected.
+pub const MAX_MESSAGE_SIZE: usize = 8000;
+
+/// Max Receipt Size of the buffer used to write the receipts.
+pub const MAX_RECEIPT_SIZE: usize = 256;
+
 /// Regular Raknet uses 10 by default. MCPE uses 20. Configure this as appropriate.
 pub const SYSTEM_ADDRESS_COUNT: usize = 20;
 
@@ -31,6 +37,10 @@ pub const UDP_HEADER_SIZE: usize = 20 + 8;
 /// Datagram Header (u8)
 /// Sequence Number (u24)
 pub const DATAGRAM_HEADER_SIZE: usize = 1 + 3;
+
+/// This is the configured rate at which the MTU_SIZE of the client is decreased every second to discover
+/// the MTU size of the server.
+pub const CLIENT_PADDING_DECREASE: usize = 40;
 
 /// This contains the size of the Raknet Frame Header.
 /// Frame Header (u8)
@@ -76,10 +86,7 @@ pub const INTERNAL_ADDRESS: &str = "255.255.255.255:19132";
 pub const RAKNET_TPS: Duration = Duration::from_millis(100);
 
 /// This specifies the duration of how often we should be checking the outlived connections.
-pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
-
-/// This specifies the duration of how often should we be building the MCPE Status.
-pub const UPDATE_MCPE_STATUS: Duration = Duration::from_secs(4);
+pub const RAKNET_CHECK_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// This value is the maximum amount of allowed RakNet messages in one second. If the number exceeds this value, the
 /// stream gets disconnected.
